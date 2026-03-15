@@ -1,0 +1,30 @@
+{
+  "name": "mayday-create",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Plugin development platform for Adobe Premiere Pro 2026",
+  "workspaces": [
+    "packages/*",
+    "plugins/*"
+  ],
+  "scripts": {
+    "dev": "npm run -w @mayday/server dev",
+    "dev:launcher": "npm run -w @mayday/launcher dev",
+    "build": "npm run build:types && npm run build:sdk && npm run build:server && npm run build:cli && npm run build:cep",
+    "build:types": "npm run -w @mayday/types build",
+    "build:sdk": "npm run -w @mayday/sdk build",
+    "build:server": "npm run -w @mayday/server build",
+    "build:cli": "npm run -w @mayday/cli build",
+    "build:cep": "npm run -w @mayday/cep-panel build",
+    "build:ui-kit": "npm run -w @mayday/ui-kit build",
+    "build:sync-engine": "npm run -w @mayday/sync-engine build",
+    "build:launcher": "npm run -w @mayday/launcher build",
+    "package:launcher": "npm run -w @mayday/launcher package",
+    "install:launcher": "npm run package:launcher && cp -R 'packages/launcher/release/mac-arm64/Mayday Create.app' /Applications/ && echo 'Installed to /Applications'",
+    "install:cep": "bash scripts/install-cep.sh",
+    "doctor": "npm run -w @mayday/cli -- mayday doctor"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}

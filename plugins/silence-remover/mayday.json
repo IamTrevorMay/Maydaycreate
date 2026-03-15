@@ -1,0 +1,39 @@
+{
+  "id": "silence-remover",
+  "name": "Silence Remover",
+  "version": "0.1.0",
+  "description": "Detect and remove silent regions from audio using AI-powered analysis",
+  "main": "src/index.ts",
+  "commands": [
+    {
+      "id": "analyze",
+      "name": "Analyze Silence",
+      "description": "Detect silent regions and add markers"
+    },
+    {
+      "id": "remove",
+      "name": "Remove Silence",
+      "description": "Remove clips at silent regions"
+    },
+    {
+      "id": "clear-markers",
+      "name": "Clear Markers",
+      "description": "Remove all silence markers"
+    }
+  ],
+  "permissions": ["timeline", "media"],
+  "config": {
+    "threshold": {
+      "type": "number",
+      "label": "Silence Threshold (dB)",
+      "default": -30,
+      "description": "Audio level below which is considered silence"
+    },
+    "minDuration": {
+      "type": "number",
+      "label": "Min Duration (seconds)",
+      "default": 0.5,
+      "description": "Minimum silence duration to detect"
+    }
+  }
+}

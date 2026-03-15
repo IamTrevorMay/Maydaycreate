@@ -1,0 +1,9 @@
+{
+  "name": "@mayday/extendscript",
+  "version": "0.1.0",
+  "private": true,
+  "description": "ExtendScript files for Premiere Pro",
+  "scripts": {
+    "build": "node build.js"
+  }
+}

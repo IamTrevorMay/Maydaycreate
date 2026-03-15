@@ -1,0 +1,35 @@
+{
+  "id": "cutting-board",
+  "name": "Cutting Board",
+  "version": "0.1.0",
+  "description": "Detect edits in the timeline, rate them, and store structured data for model training",
+  "main": "src/index.ts",
+  "commands": [
+    {
+      "id": "start-capture",
+      "name": "Start Capture",
+      "description": "Begin polling the timeline for edit detection"
+    },
+    {
+      "id": "stop-capture",
+      "name": "Stop Capture",
+      "description": "Stop polling and show session stats"
+    },
+    {
+      "id": "stats",
+      "name": "Stats",
+      "description": "Show edit statistics for the current session"
+    },
+    {
+      "id": "export-training",
+      "name": "Export Training",
+      "description": "Export quality-weighted training examples as JSONL"
+    },
+    {
+      "id": "export-data",
+      "name": "Export Data",
+      "description": "Export all cut records as JSON"
+    }
+  ],
+  "permissions": ["timeline"]
+}

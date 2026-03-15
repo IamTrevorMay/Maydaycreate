@@ -1,0 +1,271 @@
+import { app } from 'electron';
+import path from 'path';
+import fs from 'fs';
+import type {
+  AnalysisProgress,
+  VideoAnalysis,
+  VideoAnalysisSummary,
+  DetectedEffect,
+  ExtractedFrame,
+  TrainingStats,
+  BatchQueueItem,
+  YouTubeVideoInfo,
+  ExportOptions,
+  EffectPreset,
+  CapturedEffect,
+} from '@mayday/types';
+import { YouTubeDB } from './youtube-db.js';
+import { YtDlpService } from './ytdlp-service.js';
+import { AnalysisPipeline } from './analysis-pipeline.js';
+import { randomUUID } from 'crypto';
+import { getServerBridge } from '../server-bridge.js';
+
+type ProgressCallback = (progress: AnalysisProgress) => void;
+
+export class YouTubeAnalyzer {
+  private db: YouTubeDB;
+  private ytdlp: YtDlpService;
+  private pipeline: AnalysisPipeline;
+  private progressListeners: ProgressCallback[] = [];
+  private processingQueue = false;
+
+  constructor() {
+    const dataDir = path.join(app.getPath('userData'), 'youtube-analysis');
+    this.db = new YouTubeDB(dataDir);
+    this.ytdlp = new YtDlpService();
+    this.pipeline = new AnalysisPipeline(this.db);
+  }
+
+  // ── Video Info ───────────────────────────────────────────────────────────
+
+  async getVideoInfo(url: string): Promise<YouTubeVideoInfo> {
+    return this.ytdlp.getVideoInfo(url);
+  }
+
+  // ── Analysis ────────────────────────────────────────────────────────────
+
+  async startAnalysis(url: string): Promise<string> {
+    const info = await this.ytdlp.getVideoInfo(url);
+    const analysisId = this.db.createAnalysis(info);
+
+    // Run asynchronously
+    this.pipeline.run(analysisId, url, (progress) => {
+      for (const cb of this.progressListeners) cb(progress);
+    }).then(() => {
+      // After completion, try processing queue
+      this.tryProcessQueue();
+    });
+
+    return analysisId;
+  }
+
+  cancelAnalysis(id: string): void {
+    this.pipeline.cancel(id);
+  }
+
+  getAnalysis(id: string): VideoAnalysis | null {
+    return this.db.getAnalysis(id);
+  }
+
+  listAnalyses(): VideoAnalysisSummary[] {
+    return this.db.listAnalyses();
+  }
+
+  deleteAnalysis(id: string): boolean {
+    const analysis = this.db.getAnalysis(id);
+    if (analysis) {
+      // Clean up files
+      const analysisDir = path.join(app.getPath('userData'), 'youtube-analysis', id);
+      try { fs.rmSync(analysisDir, { recursive: true, force: true }); } catch {}
+    }
+    return this.db.deleteAnalysis(id);
+  }
+
+  // ── Effects & Frames ──────────────────────────────────────────────────
+
+  getEffects(analysisId: string): DetectedEffect[] {
+    return this.db.getEffects(analysisId);
+  }
+
+  getFrames(analysisId: string): ExtractedFrame[] {
+    return this.db.getFrames(analysisId);
+  }
+
+  // ── Rating & Training ────────────────────────────────────────────────
+
+  rateEffect(effectId: string, rating: number, correctionNote?: string): void {
+    this.db.rateEffect(effectId, rating, correctionNote);
+
+    // If thumbs down with correction, save as training data
+    if (rating === -1 && correctionNote) {
+      const effect = this.db.getEffect(effectId);
+      if (effect) {
+        this.db.insertCorrection({
+          effectId,
+          analysisId: effect.analysisId,
+          originalCategory: effect.category,
+          correctedCategory: null,
+          originalDescription: effect.description,
+          correctionNote,
+          frameBeforePath: effect.frameBefore,
+          frameAfterPath: effect.frameAfter,
+        });
+      }
+    }
+  }
+
+  getTrainingStats(): TrainingStats {
+    return this.db.getTrainingStats();
+  }
+
+  // ── Preset Integration ──────────────────────────────────────────────
+
+  async saveEffectAsPreset(effectId: string, presetName: string, tags?: string[]): Promise<string> {
+    const effect = this.db.getEffect(effectId);
+    if (!effect) throw new Error('Effect not found');
+
+    // Build a synthetic CapturedEffect from the AI analysis
+    const capturedEffects: CapturedEffect[] = effect.premiereRecreation.suggestedEffects.map((name, i) => ({
+      displayName: name,
+      matchName: name.replace(/\s+/g, '.'),
+      index: i,
+      isIntrinsic: false,
+      properties: Object.entries(effect.premiereRecreation.estimatedParameters).map(([key, val]) => ({
+        displayName: key,
+        matchName: key.replace(/\s+/g, '.'),
+        type: 0,
+        value: val,
+        keyframes: null,
+      })),
+    }));
+
+    const now = new Date().toISOString();
+    const preset: EffectPreset = {
+      id: randomUUID(),
+      name: presetName,
+      version: 1,
+      tags: tags || [effect.category],
+      folder: 'youtube-analysis',
+      description: `AI-detected: ${effect.description}\n\nRecreation steps:\n${effect.premiereRecreation.steps.map((s, i) => `${i + 1}. ${s}`).join('\n')}`,
+      sourceClipName: `YouTube Analysis`,
+      includeIntrinsics: false,
+      createdAt: now,
+      updatedAt: now,
+      effects: capturedEffects,
+    };
+
+    // Try saving via preset-vault plugin
+    const bridge = getServerBridge();
+    if (bridge) {
+      try {
+        await bridge.lifecycle.executeCommand('preset-vault', 'save-synthetic', { preset });
+      } catch {
+        // Plugin may not be active; that's OK, the preset ID is still stored
+      }
+    }
+
+    this.db.setSavedPresetId(effectId, preset.id);
+    return preset.id;
+  }
+
+  // ── Queue ─────────────────────────────────────────────────────────────
+
+  addToQueue(url: string, title?: string): string {
+    return this.db.addToQueue(url, title);
+  }
+
+  removeFromQueue(id: string): void {
+    this.db.removeFromQueue(id);
+  }
+
+  getQueue(): BatchQueueItem[] {
+    return this.db.getQueue();
+  }
+
+  async processQueue(): Promise<void> {
+    if (this.processingQueue || this.pipeline.activeCount > 0) return;
+    this.processingQueue = true;
+    try {
+      await this.tryProcessQueue();
+    } finally {
+      this.processingQueue = false;
+    }
+  }
+
+  private async tryProcessQueue(): Promise<void> {
+    if (this.pipeline.activeCount > 0) return;
+
+    const next = this.db.getNextQueued();
+    if (!next) return;
+
+    this.db.updateQueueItem(next.id, 'processing');
+    try {
+      const analysisId = await this.startAnalysis(next.url);
+      this.db.updateQueueItem(next.id, 'complete', analysisId);
+    } catch {
+      this.db.updateQueueItem(next.id, 'error');
+    }
+  }
+
+  // ── Export ─────────────────────────────────────────────────────────────
+
+  exportAnalysis(options: ExportOptions): string {
+    const analysis = this.db.getAnalysis(options.analysisId);
+    if (!analysis) throw new Error('Analysis not found');
+    const effects = this.db.getEffects(options.analysisId);
+
+    if (options.format === 'json') {
+      return JSON.stringify({ analysis, effects }, null, 2);
+    }
+
+    // Markdown export
+    let md = `# Video Analysis: ${analysis.title}\n\n`;
+    md += `**Channel:** ${analysis.channel}\n`;
+    md += `**Duration:** ${analysis.duration.toFixed(0)}s\n`;
+    md += `**URL:** ${analysis.url}\n\n`;
+
+    if (analysis.summary) md += `## Summary\n${analysis.summary}\n\n`;
+    if (analysis.styleNotes) md += `## Style Notes\n${analysis.styleNotes}\n\n`;
+
+    md += `## Detected Effects (${effects.length})\n\n`;
+
+    for (const e of effects) {
+      md += `### ${e.effectIndex + 1}. ${e.category} (${e.confidence} confidence)\n`;
+      md += `**Time:** ${e.startTime.toFixed(1)}s - ${e.endTime.toFixed(1)}s\n\n`;
+      md += `${e.description}\n\n`;
+
+      if (e.premiereRecreation.steps.length > 0) {
+        md += `**Premiere Pro Recreation:**\n`;
+        e.premiereRecreation.steps.forEach((step, i) => {
+          md += `${i + 1}. ${step}\n`;
+        });
+        md += '\n';
+      }
+
+      if (e.premiereRecreation.suggestedEffects.length > 0) {
+        md += `**Suggested Effects:** ${e.premiereRecreation.suggestedEffects.join(', ')}\n\n`;
+      }
+
+      if (options.includeFramePaths) {
+        md += `**Frames:** ${e.frameBefore} → ${e.frameAfter}\n\n`;
+      }
+
+      md += '---\n\n';
+    }
+
+    return md;
+  }
+
+  // ── Events ────────────────────────────────────────────────────────────
+
+  onProgress(cb: ProgressCallback): () => void {
+    this.progressListeners.push(cb);
+    return () => {
+      this.progressListeners = this.progressListeners.filter(l => l !== cb);
+    };
+  }
+
+  destroy(): void {
+    this.db.close();
+  }
+}

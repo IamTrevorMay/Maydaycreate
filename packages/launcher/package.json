@@ -1,0 +1,85 @@
+{
+  "name": "@mayday/launcher",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Plugin development platform for Adobe Premiere Pro",
+  "author": "Mayday",
+  "main": "out/main/index.js",
+  "scripts": {
+    "dev": "electron-vite dev",
+    "build": "electron-vite build",
+    "package": "npm run build && electron-builder"
+  },
+  "dependencies": {
+    "@mayday/server": "*",
+    "@mayday/sync-engine": "*",
+    "@mayday/types": "*",
+    "@mayday/ui-kit": "*",
+    "better-sqlite3": "^11.0.0",
+    "electron-store": "^8.1.0",
+    "uuid": "^9.0.0",
+    "yt-dlp-wrap": "^2.3.12",
+    "@anthropic-ai/sdk": "^0.39.0"
+  },
+  "devDependencies": {
+    "@electron-toolkit/preload": "^3.0.0",
+    "@electron-toolkit/utils": "^4.0.0",
+    "@types/better-sqlite3": "^7.6.0",
+    "@types/node": "^20.0.0",
+    "@types/react": "^18.3.0",
+    "@types/react-dom": "^18.3.0",
+    "@types/uuid": "^9.0.0",
+    "@vitejs/plugin-react": "^4.3.0",
+    "electron": "^31.0.0",
+    "electron-builder": "^24.13.0",
+    "electron-vite": "^2.3.0",
+    "react": "^18.3.0",
+    "react-dom": "^18.3.0",
+    "typescript": "^5.4.0",
+    "vite": "^5.4.0"
+  },
+  "build": {
+    "appId": "com.mayday.create",
+    "productName": "Mayday Create",
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "out/**/*",
+      "resources/**/*"
+    ],
+    "extraResources": [
+      {
+        "from": "../../plugins",
+        "to": "plugins",
+        "filter": [
+          "**/*",
+          "!**/node_modules/**",
+          "!**/.mayday-build/**"
+        ]
+      }
+    ],
+    "mac": {
+      "category": "public.app-category.productivity",
+      "target": [
+        {
+          "target": "dmg",
+          "arch": [
+            "arm64"
+          ]
+        }
+      ],
+      "icon": "resources/icon.icns",
+      "identity": null
+    },
+    "dmg": {
+      "title": "Mayday Create",
+      "contents": [
+        { "x": 130, "y": 220 },
+        { "x": 410, "y": 220, "type": "link", "path": "/Applications" }
+      ]
+    },
+    "npmRebuild": true,
+    "electronVersion": "31.7.7"
+  }
+}

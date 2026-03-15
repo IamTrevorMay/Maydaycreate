@@ -1,0 +1,80 @@
+{
+  "id": "edit-agent",
+  "name": "AI Edit Agent",
+  "version": "0.1.0",
+  "description": "AI-powered editing agent that learns from your patterns and suggests or executes edits",
+  "main": "src/index.ts",
+  "commands": [
+    {
+      "id": "analyze",
+      "name": "Analyze Timeline",
+      "description": "One-shot: read timeline, get AI edit proposals"
+    },
+    {
+      "id": "execute-next",
+      "name": "Execute Next",
+      "description": "Execute the next pending proposal"
+    },
+    {
+      "id": "accept-all",
+      "name": "Accept All",
+      "description": "Accept and execute all pending proposals"
+    },
+    {
+      "id": "reject-all",
+      "name": "Reject All",
+      "description": "Reject all pending proposals"
+    },
+    {
+      "id": "set-mode",
+      "name": "Set Mode",
+      "description": "Switch agent mode (suggest, preview, auto)"
+    },
+    {
+      "id": "start-agent",
+      "name": "Start Agent",
+      "description": "Start the observe-decide-act loop"
+    },
+    {
+      "id": "stop-agent",
+      "name": "Stop Agent",
+      "description": "Stop the agent loop"
+    },
+    {
+      "id": "refresh-patterns",
+      "name": "Refresh Patterns",
+      "description": "Reload example bank and recalibrate confidence thresholds"
+    },
+    {
+      "id": "status",
+      "name": "Status",
+      "description": "Show current agent state and stats"
+    }
+  ],
+  "config": {
+    "mode": {
+      "type": "select",
+      "label": "Agent Mode",
+      "default": "suggest",
+      "options": [
+        { "label": "Suggest", "value": "suggest" },
+        { "label": "Preview", "value": "preview" },
+        { "label": "Auto", "value": "auto" }
+      ],
+      "description": "suggest: propose only, preview: propose + markers, auto: execute above threshold"
+    },
+    "threshold": {
+      "type": "number",
+      "label": "Confidence Threshold",
+      "default": 0.7,
+      "description": "Minimum confidence for auto-execution (0-1)"
+    },
+    "max-proposals": {
+      "type": "number",
+      "label": "Max Proposals",
+      "default": 10,
+      "description": "Maximum proposals per analysis cycle"
+    }
+  },
+  "permissions": ["timeline", "ai"]
+}

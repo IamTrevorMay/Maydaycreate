@@ -1,0 +1,40 @@
+{
+  "id": "preset-vault",
+  "name": "Preset Vault",
+  "version": "0.1.0",
+  "description": "Capture, save, and re-apply Premiere Pro effect stacks across clips and projects",
+  "main": "src/index.ts",
+  "commands": [
+    {
+      "id": "capture",
+      "name": "Capture Effects",
+      "description": "Capture all effects from the selected clip as a reusable preset"
+    },
+    {
+      "id": "apply",
+      "name": "Apply Preset",
+      "description": "Apply a saved preset to the selected clip"
+    },
+    {
+      "id": "list",
+      "name": "List Presets",
+      "description": "List all saved presets with optional filtering"
+    },
+    {
+      "id": "delete-preset",
+      "name": "Delete Preset",
+      "description": "Delete a saved preset from the vault"
+    },
+    {
+      "id": "export-excalibur",
+      "name": "Export Macros",
+      "description": "Export presets as Excalibur, AHK, or Keyboard Maestro macros"
+    },
+    {
+      "id": "clear-effects",
+      "name": "Clear Effects",
+      "description": "Remove all non-intrinsic effects from the selected clip"
+    }
+  ],
+  "permissions": ["effects"]
+}
