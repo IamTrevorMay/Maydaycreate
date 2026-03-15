@@ -11,6 +11,7 @@
     "package": "npm run build && electron-builder"
   },
   "dependencies": {
+    "@mayday/sdk": "*",
     "@mayday/server": "*",
     "@mayday/sync-engine": "*",
     "@mayday/types": "*",
@@ -48,6 +49,7 @@
       "out/**/*",
       "resources/**/*"
     ],
+    "asar": false,
     "extraResources": [
       {
         "from": "../../plugins",

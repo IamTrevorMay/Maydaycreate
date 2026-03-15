@@ -222,13 +222,13 @@ export function registerYouTubeIpc(): void {
 export function bridgeSyncEvents(): void {
   if (!_syncEngine) return;
   _syncEngine.onStatusChanged((status) => {
-    _win?.webContents.send('sync:statusChanged', status);
+    if (_win && !_win.isDestroyed()) _win.webContents.send('sync:statusChanged', status);
   });
 }
 
 /** Push server status changes to renderer */
 export function bridgeServerEvents(): void {
   onServerStatus((status) => {
-    _win?.webContents.send('server:statusChanged', status);
+    if (_win && !_win.isDestroyed()) _win.webContents.send('server:statusChanged', status);
   });
 }

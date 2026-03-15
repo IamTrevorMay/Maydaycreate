@@ -26,6 +26,37 @@ if (app.isPackaged) {
   if (missing.length) {
     process.env.PATH = [...missing, current].join(':');
   }
+
+  // Symlink app's node_modules into the plugins directory so ESM imports resolve
+  const appNodeModules = path.join(process.resourcesPath, 'app', 'node_modules');
+  const pluginsNodeModules = path.join(process.resourcesPath, 'plugins', 'node_modules');
+  if (fs.existsSync(appNodeModules) && !fs.existsSync(pluginsNodeModules)) {
+    try {
+      fs.symlinkSync(appNodeModules, pluginsNodeModules, 'dir');
+    } catch {
+      // If symlink fails (permissions), copy won't work either — plugins will degrade gracefully
+    }
+  }
+}
+
+// Migrate config from dev userData to packaged userData on first launch
+if (app.isPackaged) {
+  const packagedConfigPath = path.join(app.getPath('userData'), 'launcher-config.json');
+  if (!fs.existsSync(packagedConfigPath)) {
+    const devConfigPath = path.join(
+      app.getPath('home'),
+      'Library',
+      'Application Support',
+      '@mayday',
+      'launcher',
+      'launcher-config.json',
+    );
+    if (fs.existsSync(devConfigPath)) {
+      fs.mkdirSync(path.dirname(packagedConfigPath), { recursive: true });
+      fs.copyFileSync(devConfigPath, packagedConfigPath);
+      console.log('[Launcher] Migrated config from dev userData');
+    }
+  }
 }
 
 // Enforce single instance — if another instance is already running, quit this one

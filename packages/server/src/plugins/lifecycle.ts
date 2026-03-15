@@ -1,7 +1,7 @@
 import path from 'path';
 import fs from 'fs';
 import os from 'os';
-import { pathToFileURL } from 'url';
+import { pathToFileURL, fileURLToPath } from 'url';
 import { build } from 'esbuild';
 import type {
   PluginManifest,
@@ -55,6 +55,20 @@ export class PluginLifecycle {
       if (mainPath.endsWith('.ts')) {
         const pluginDir = path.dirname(mainPath);
         const outFile = path.join(pluginDir, '.mayday-build', 'index.mjs');
+
+        // Find node_modules that contain @mayday packages so plugins can resolve them
+        const thisFile = fileURLToPath(import.meta.url);
+        const nodeModulesDirs: string[] = [];
+        let dir = path.dirname(thisFile);
+        while (dir !== path.dirname(dir)) {
+          const nm = path.join(dir, 'node_modules');
+          if (fs.existsSync(path.join(nm, '@mayday', 'sdk'))) {
+            nodeModulesDirs.push(nm);
+            break;
+          }
+          dir = path.dirname(dir);
+        }
+
         await build({
           entryPoints: [mainPath],
           bundle: true,
@@ -63,6 +77,8 @@ export class PluginLifecycle {
           outfile: outFile,
           // Keep native/Node modules external — they resolve from the main process
           external: ['better-sqlite3', 'fs', 'path', 'os', 'crypto', 'util', 'events', 'stream', 'url', 'http', 'https', 'net', 'child_process', 'worker_threads'],
+          // Allow plugins to resolve @mayday/* packages from the server's module tree
+          nodePaths: nodeModulesDirs,
         });
         importPath = outFile;
       }

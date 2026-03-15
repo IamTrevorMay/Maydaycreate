@@ -1,5 +1,7 @@
 node_modules/
 dist/
+out/
+release/
 *.js.map
 *.d.ts.map
 .env
@@ -10,3 +12,4 @@ cutting-board/data/
 *.db-wal
 *.bin
 .DS_Store
+.mayday-build/
