@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "vite build --outDir ../../dist/cep/client",
+    "build": "vite build --outDir ../../dist/cep/client && cp -R CSXS ../../dist/cep/CSXS",
     "preview": "vite preview"
   },
   "dependencies": {

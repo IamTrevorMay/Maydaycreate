@@ -19,8 +19,8 @@ const DEFAULTS: LauncherConfig = {
   machineId: uuid(),
   machineName: require('os').hostname(),
   serverPort: 9876,
-  autoLaunchOnLogin: false,
-  startMinimized: false,
+  autoLaunchOnLogin: true,
+  startMinimized: true,
   anthropicApiKey: '',
   sourceRepoPath: '/Users/trevor/Desktop/MaydayCreate',
 };

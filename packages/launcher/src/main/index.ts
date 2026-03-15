@@ -122,6 +122,9 @@ app.whenReady().then(async () => {
 
   const config = loadConfig();
 
+  // Ensure login item matches config
+  app.setLoginItemSettings({ openAtLogin: config.autoLaunchOnLogin });
+
   // Set API key from config (falls back to env var if not configured)
   if (config.anthropicApiKey) {
     process.env.ANTHROPIC_API_KEY = config.anthropicApiKey;
