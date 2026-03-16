@@ -29,6 +29,31 @@
       "id": "export-data",
       "name": "Export Data",
       "description": "Export all cut records as JSON"
+    },
+    {
+      "id": "train-model",
+      "name": "Train Model",
+      "description": "Train the local autocut neural network from collected edit data"
+    },
+    {
+      "id": "start-autocut",
+      "name": "Start Autocut",
+      "description": "Load the trained model and begin real-time edit suggestions"
+    },
+    {
+      "id": "stop-autocut",
+      "name": "Stop Autocut",
+      "description": "Stop autocut suggestions"
+    },
+    {
+      "id": "autocut-status",
+      "name": "Autocut Status",
+      "description": "Show model stats, accuracy, and current autocut state"
+    },
+    {
+      "id": "accept-suggestion",
+      "name": "Accept Suggestion",
+      "description": "Execute the current autocut suggestion on the timeline"
     }
   ],
   "permissions": ["timeline"]

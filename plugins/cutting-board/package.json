@@ -6,7 +6,8 @@
   "main": "src/index.ts",
   "dependencies": {
     "@mayday/sdk": "*",
-    "better-sqlite3": "^11.0.0"
+    "better-sqlite3": "^11.0.0",
+    "brain.js": "^2.0.0-beta.23"
   },
   "devDependencies": {
     "@types/better-sqlite3": "^7.6.0"

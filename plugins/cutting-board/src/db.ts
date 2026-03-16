@@ -27,6 +27,14 @@ export class CuttingBoardDB {
         total_edits INTEGER DEFAULT 0
       );
 
+      CREATE TABLE IF NOT EXISTS model_training_runs (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        trained_at INTEGER NOT NULL,
+        training_size INTEGER NOT NULL,
+        accuracy REAL NOT NULL,
+        version INTEGER NOT NULL
+      );
+
       CREATE TABLE IF NOT EXISTS cut_records (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         session_id INTEGER NOT NULL REFERENCES sessions(id),
@@ -347,6 +355,20 @@ export class CuttingBoardDB {
     this.db.prepare(
       `UPDATE ${table} SET synced_at = ? WHERE id IN (${placeholders})`
     ).run(now, ...ids);
+  }
+
+  recordTrainingRun(trainingSize: number, accuracy: number, version: number): number {
+    const stmt = this.db.prepare(
+      'INSERT INTO model_training_runs (trained_at, training_size, accuracy, version) VALUES (?, ?, ?, ?)'
+    );
+    const result = stmt.run(Date.now(), trainingSize, accuracy, version);
+    return result.lastInsertRowid as number;
+  }
+
+  getLatestTrainingRun(): { id: number; trainedAt: number; trainingSize: number; accuracy: number; version: number } | null {
+    return this.db.prepare(
+      'SELECT id, trained_at as trainedAt, training_size as trainingSize, accuracy, version FROM model_training_runs ORDER BY trained_at DESC LIMIT 1'
+    ).get() as { id: number; trainedAt: number; trainingSize: number; accuracy: number; version: number } | undefined ?? null;
   }
 
   close(): void {

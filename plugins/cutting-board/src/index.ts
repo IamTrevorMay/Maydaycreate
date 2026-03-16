@@ -4,6 +4,9 @@ import { createSnapshot, diffSnapshots, checkForUndo } from './diff.js';
 import { CuttingBoardDB } from './db.js';
 import { extractFeatures, toJSONL, formatForPrompt } from './pipeline.js';
 import { ExampleBank } from './example-bank.js';
+import { trainClassifier, trainRegressor, saveModel, loadModel, instantiateNet } from './model.js';
+import { findTargetClip, buildInferenceInput, runInference } from './inference.js';
+import type { AutocutSuggestion, SerializedModel } from './autocut-types.js';
 import type { TimelineSnapshot, EditChange } from './types.js';
 
 const POLL_INTERVAL = 500;
@@ -16,6 +19,14 @@ let previousSnapshot: TimelineSnapshot | null = null;
 let snapshotHistory: TimelineSnapshot[] = [];
 let editCount = 0;
 let eventSubs: Array<{ unsubscribe(): void }> = [];
+
+// Autocut state
+let autocutEnabled = false;
+let autocutClassifier: any = null;
+let autocutRegressors = new Map<string, any>();
+let autocutThreshold = 0.6;
+let lastSuggestionTime = 0;
+let currentSuggestion: AutocutSuggestion | null = null;
 
 // Dedupe edits across poll cycles (linked audio+video arrive separately)
 const recentEdits = new Map<string, number>(); // dedupeKey → timestamp
@@ -47,6 +58,52 @@ function cleanup() {
   snapshotHistory = [];
   currentSessionId = null;
   editCount = 0;
+  autocutEnabled = false;
+  autocutClassifier = null;
+  autocutRegressors = new Map();
+  currentSuggestion = null;
+}
+
+async function runAutocutSuggestion(ctx: PluginContext) {
+  try {
+    const seq = await ctx.services.timeline.getActiveSequence();
+    if (!seq) return;
+
+    const playhead = await ctx.services.timeline.getPlayheadPosition();
+    const target = findTargetClip(seq, playhead);
+    if (!target) return;
+
+    const recentRecords = db ? db.getRecentRecords(10) as any[] : [];
+    const recentEditHistory = recentRecords.map((r: any) => ({
+      editType: r.edit_type as string,
+      timestamp: r.detected_at as number,
+      quality: r.rating === 1 ? 'good' : r.rating === 0 ? 'bad' : 'good',
+    }));
+
+    const input = buildInferenceInput(
+      target.clip, playhead, recentEditHistory,
+      target.neighborBefore, target.neighborAfter,
+    );
+
+    const suggestion = runInference(input, autocutClassifier, autocutRegressors, {
+      trackIndex: target.trackIndex,
+      trackType: target.trackType,
+      clipIndex: target.clipIndex,
+      name: target.clip.name,
+      start: target.clip.start,
+      end: target.clip.end,
+      duration: target.clip.duration,
+    }, autocutThreshold);
+
+    if (suggestion) {
+      currentSuggestion = suggestion;
+      lastSuggestionTime = Date.now();
+      ctx.ui.pushToPanel('autocut-suggestion', suggestion);
+      ctx.log.debug(`Autocut suggestion: ${suggestion.editType} (${(suggestion.confidence * 100).toFixed(0)}%) on "${suggestion.targetClip.clipName}"`);
+    }
+  } catch (err) {
+    ctx.log.error('Autocut inference error:', err);
+  }
 }
 
 let pollCount = 0;
@@ -78,7 +135,12 @@ async function pollTimeline(ctx: PluginContext) {
     }
 
     // Skip if nothing changed
-    if (snapshot.hash === previousSnapshot.hash) return;
+    if (snapshot.hash === previousSnapshot.hash) {
+      if (autocutEnabled && autocutClassifier && (Date.now() - lastSuggestionTime > 3000)) {
+        await runAutocutSuggestion(ctx);
+      }
+      return;
+    }
 
     ctx.log.info(`Poll: hash changed! ${previousSnapshot.hash.slice(0, 8)} -> ${snapshot.hash.slice(0, 8)}, ${totalClips} clips`);
 
@@ -352,6 +414,208 @@ export default definePlugin({
       const { table, ids } = args as { table: 'sessions' | 'cut_records'; ids: number[] };
       db.markSynced(table, ids);
       return { marked: ids.length };
+    },
+
+    'train-model': async (ctx) => {
+      if (!db) db = new CuttingBoardDB(ctx.dataDir);
+
+      const records = db.getQualityRecords();
+      if (records.length < 30) {
+        ctx.ui.showToast(`Need at least 30 edits for training (have ${records.length})`, 'warning');
+        return null;
+      }
+
+      const examples = records.map(r => extractFeatures(r));
+
+      ctx.log.info(`Training classifier on ${examples.length} examples...`);
+      const { model: classifierJson, accuracy } = trainClassifier(examples);
+
+      const regressorJsons: Record<string, object> = {};
+      for (const editType of ['cut', 'trim-head', 'trim-tail', 'delete', 'move', 'add']) {
+        const regressorJson = trainRegressor(editType, examples);
+        if (regressorJson) {
+          regressorJsons[editType] = regressorJson;
+          ctx.log.info(`Trained ${editType} regressor`);
+        }
+      }
+
+      const latestRun = db.getLatestTrainingRun();
+      const version = (latestRun?.version ?? 0) + 1;
+
+      const serialized: SerializedModel = {
+        version,
+        trainedAt: Date.now(),
+        trainingSize: examples.length,
+        accuracy,
+        classifier: classifierJson,
+        regressors: regressorJsons,
+      };
+
+      saveModel(serialized, ctx.dataDir);
+      db.recordTrainingRun(examples.length, accuracy, version);
+
+      const msg = `Model v${version} trained: ${(accuracy * 100).toFixed(1)}% accuracy on ${examples.length} examples`;
+      ctx.log.info(msg);
+      ctx.ui.showToast(msg, 'success');
+
+      return { version, accuracy, trainingSize: examples.length, regressors: Object.keys(regressorJsons) };
+    },
+
+    'start-autocut': async (ctx) => {
+      if (autocutEnabled) {
+        ctx.ui.showToast('Autocut already running', 'warning');
+        return { enabled: true };
+      }
+
+      const serialized = loadModel(ctx.dataDir);
+      if (!serialized) {
+        ctx.ui.showToast('No trained model found — run train-model first', 'warning');
+        return null;
+      }
+
+      autocutClassifier = instantiateNet(serialized.classifier);
+      autocutRegressors = new Map();
+      for (const [editType, json] of Object.entries(serialized.regressors)) {
+        autocutRegressors.set(editType, instantiateNet(json));
+      }
+      autocutEnabled = true;
+      lastSuggestionTime = 0;
+      currentSuggestion = null;
+
+      ctx.log.info(`Autocut started (model v${serialized.version}, ${(serialized.accuracy * 100).toFixed(1)}% accuracy)`);
+      ctx.ui.showToast('Autocut enabled', 'success');
+
+      return { version: serialized.version, accuracy: serialized.accuracy };
+    },
+
+    'stop-autocut': async (ctx) => {
+      autocutEnabled = false;
+      autocutClassifier = null;
+      autocutRegressors = new Map();
+      currentSuggestion = null;
+
+      ctx.ui.showToast('Autocut disabled', 'info');
+      return { enabled: false };
+    },
+
+    'autocut-status': async (ctx) => {
+      if (!db) db = new CuttingBoardDB(ctx.dataDir);
+
+      const serialized = loadModel(ctx.dataDir);
+
+      const status = {
+        enabled: autocutEnabled,
+        model: serialized ? {
+          version: serialized.version,
+          trainedAt: serialized.trainedAt,
+          trainingSize: serialized.trainingSize,
+          accuracy: serialized.accuracy,
+          regressors: Object.keys(serialized.regressors),
+          staleness: Math.round((Date.now() - serialized.trainedAt) / 1000 / 60),
+        } : null,
+        threshold: autocutThreshold,
+        currentSuggestion: currentSuggestion ? {
+          editType: currentSuggestion.editType,
+          confidence: currentSuggestion.confidence,
+          clipName: currentSuggestion.targetClip.clipName,
+        } : null,
+      };
+
+      if (serialized) {
+        ctx.ui.showToast(
+          `Autocut ${autocutEnabled ? 'ON' : 'OFF'} | Model v${serialized.version}: ${(serialized.accuracy * 100).toFixed(0)}% accuracy, ${serialized.trainingSize} examples, ${status.model!.staleness}m old`,
+          'info',
+        );
+      } else {
+        ctx.ui.showToast('No model trained yet', 'info');
+      }
+
+      return status;
+    },
+
+    'accept-suggestion': async (ctx) => {
+      if (!currentSuggestion) {
+        ctx.ui.showToast('No current suggestion', 'warning');
+        return null;
+      }
+
+      const suggestion = currentSuggestion;
+      const { timeline } = ctx.services;
+      const seq = await timeline.getActiveSequence();
+      if (!seq) {
+        ctx.ui.showToast('No active sequence', 'warning');
+        return null;
+      }
+
+      const tracks = suggestion.targetClip.trackType === 'video' ? seq.videoTracks : seq.audioTracks;
+      const track = tracks.find(t => t.index === suggestion.targetClip.trackIndex);
+      if (!track || suggestion.targetClip.clipIndex >= track.clips.length) {
+        ctx.ui.showToast('Target clip no longer exists', 'warning');
+        currentSuggestion = null;
+        return null;
+      }
+
+      const clip = track.clips[suggestion.targetClip.clipIndex];
+      let success = false;
+
+      try {
+        switch (suggestion.editType) {
+          case 'cut': {
+            const splitTime = clip.start + (suggestion.parameters.splitRatio ?? 0.5) * clip.duration;
+            success = await timeline.splitClip(
+              suggestion.targetClip.trackIndex, suggestion.targetClip.clipIndex,
+              suggestion.targetClip.trackType, splitTime,
+            );
+            break;
+          }
+          case 'trim-head': {
+            const trimAmount = suggestion.parameters.trimAmount ?? clip.duration * 0.1;
+            success = await (timeline as any).setClipInOutPoints(
+              suggestion.targetClip.trackIndex, suggestion.targetClip.clipIndex,
+              clip.inPoint + trimAmount, clip.outPoint,
+            );
+            break;
+          }
+          case 'trim-tail': {
+            const trimAmount = suggestion.parameters.trimAmount ?? clip.duration * 0.1;
+            success = await (timeline as any).setClipInOutPoints(
+              suggestion.targetClip.trackIndex, suggestion.targetClip.clipIndex,
+              clip.inPoint, clip.outPoint - trimAmount,
+            );
+            break;
+          }
+          case 'delete': {
+            if (suggestion.parameters.ripple) {
+              success = await timeline.rippleDelete(
+                suggestion.targetClip.trackIndex, suggestion.targetClip.clipIndex,
+                suggestion.targetClip.trackType,
+              );
+            } else {
+              success = await timeline.liftClip(
+                suggestion.targetClip.trackIndex, suggestion.targetClip.clipIndex,
+                suggestion.targetClip.trackType,
+              );
+            }
+            break;
+          }
+          default:
+            ctx.ui.showToast(`Unsupported edit type: ${suggestion.editType}`, 'warning');
+            return null;
+        }
+      } catch (err) {
+        ctx.log.error('Failed to execute suggestion:', err);
+        ctx.ui.showToast('Failed to execute suggestion', 'error');
+        return null;
+      }
+
+      if (success) {
+        ctx.ui.showToast(`Applied ${suggestion.editType} edit`, 'success');
+        currentSuggestion = null;
+      } else {
+        ctx.ui.showToast('Edit execution failed', 'error');
+      }
+
+      return { success, editType: suggestion.editType };
     },
   },
 });
