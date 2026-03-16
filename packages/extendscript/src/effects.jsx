@@ -4,6 +4,14 @@ var MaydayEffects = (function () {
     // Intrinsic components on video clips: Motion (0), Opacity (1), Time Remapping (2)
     var INTRINSIC_COUNT_VIDEO = 3;
 
+    function pad(n) { return n < 10 ? "0" + n : "" + n; }
+
+    function isoNow() {
+        var d = new Date();
+        return d.getUTCFullYear() + "-" + pad(d.getUTCMonth() + 1) + "-" + pad(d.getUTCDate()) +
+            "T" + pad(d.getUTCHours()) + ":" + pad(d.getUTCMinutes()) + ":" + pad(d.getUTCSeconds()) + "Z";
+    }
+
     function readKeyframes(prop) {
         if (!prop.isTimeVarying()) return null;
         var kfs = [];
@@ -84,7 +92,7 @@ var MaydayEffects = (function () {
         return {
             clipName: clip.name,
             trackType: trackType || "video",
-            capturedAt: new Date().toISOString(),
+            capturedAt: isoNow(),
             effects: effects
         };
     }

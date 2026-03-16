@@ -27,6 +27,25 @@ function binaryPath(): string {
   return path.join(binDir(), `yt-dlp${ext}`);
 }
 
+// yt-dlp 2026+ requires a JS runtime for YouTube extraction.
+// Pass the explicit node path so it works in packaged apps where PATH is minimal.
+import { execFileSync } from 'child_process';
+
+function findNodePath(): string {
+  // Common locations on macOS/Linux
+  const candidates = ['/usr/local/bin/node', '/opt/homebrew/bin/node', '/usr/bin/node'];
+  for (const p of candidates) {
+    if (fs.existsSync(p)) return p;
+  }
+  try {
+    return execFileSync('which', ['node'], { encoding: 'utf-8' }).trim();
+  } catch {
+    return 'node';
+  }
+}
+
+const JS_RUNTIME_ARGS = ['--js-runtimes', `node:${findNodePath()}`];
+
 export class YtDlpService {
   async ensureBinary(): Promise<string> {
     const binPath = binaryPath();
@@ -43,7 +62,7 @@ export class YtDlpService {
     const Wrap = await getYTDlpWrap();
     const ytdlp = new Wrap(binPath);
 
-    const raw = await ytdlp.getVideoInfo(url);
+    const raw = await ytdlp.getVideoInfo([url, ...JS_RUNTIME_ARGS]);
 
     return {
       videoId: raw.id || '',
@@ -74,6 +93,7 @@ export class YtDlpService {
     return new Promise<string>((resolve, reject) => {
       const proc = ytdlp.exec([
         url,
+        ...JS_RUNTIME_ARGS,
         '-f', 'bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best',
         '--merge-output-format', 'mp4',
         '-o', outputPath,
@@ -109,6 +129,7 @@ export class YtDlpService {
     return new Promise<string>((resolve, reject) => {
       const proc = ytdlp.exec([
         url,
+        ...JS_RUNTIME_ARGS,
         '--write-thumbnail',
         '--skip-download',
         '--convert-thumbnails', 'png',
