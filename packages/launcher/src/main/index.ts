@@ -166,6 +166,10 @@ app.whenReady().then(async () => {
     port: config.serverPort,
     isDev: is.dev,
     resourcesPath: process.resourcesPath,
+    supabaseUrl: config.supabaseUrl,
+    supabaseAnonKey: config.supabaseAnonKey,
+    machineId: config.machineId,
+    machineName: config.machineName,
   });
 
   // If sync source is configured, start a sync

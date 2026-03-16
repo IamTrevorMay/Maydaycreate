@@ -76,6 +76,10 @@ const mayday = {
       ipcRenderer.invoke('config:setAutoLaunch', enabled),
     setAnthropicApiKey: (key: string): Promise<LauncherConfig> =>
       ipcRenderer.invoke('config:setAnthropicApiKey', key),
+    setSupabaseUrl: (url: string): Promise<LauncherConfig> =>
+      ipcRenderer.invoke('config:setSupabaseUrl', url),
+    setSupabaseAnonKey: (key: string): Promise<LauncherConfig> =>
+      ipcRenderer.invoke('config:setSupabaseAnonKey', key),
     migrateSyncSource: (oldPath: string, newPath: string): Promise<LauncherConfig> =>
       ipcRenderer.invoke('config:migrateSyncSource', oldPath, newPath),
     onMigrationProgress: (cb: (progress: MigrationProgress) => void) => {
@@ -100,6 +104,8 @@ const mayday = {
       commitsBehind: number;
     }> => ipcRenderer.invoke('app:checkForUpdates'),
     installUpdate: (): Promise<void> => ipcRenderer.invoke('app:installUpdate'),
+    pushVersion: (): Promise<{ commitHash: string; hadChanges: boolean }> =>
+      ipcRenderer.invoke('app:pushVersion'),
     relaunch: (): Promise<void> => ipcRenderer.invoke('app:relaunch'),
     onUpdateProgress: (cb: (progress: { phase: string; message: string; pct: number; done: boolean; error?: string }) => void) => {
       const handler = (_: unknown, progress: { phase: string; message: string; pct: number; done: boolean; error?: string }) => cb(progress);

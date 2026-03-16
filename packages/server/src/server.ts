@@ -13,11 +13,16 @@ import { AIService } from './services/ai.js';
 import { MediaService } from './services/media.js';
 import { EffectsService } from './services/effects.js';
 import { HotkeyService } from './services/hotkeys.js';
+import { SupabaseSyncService } from './services/supabase-sync.js';
 
 export interface ServerConfig {
   port: number;
   pluginsDir: string;
   dataDir: string;
+  supabaseUrl?: string;
+  supabaseAnonKey?: string;
+  machineId?: string;
+  machineName?: string;
 }
 
 export async function startServer(config: ServerConfig) {
@@ -128,6 +133,31 @@ export async function startServer(config: ServerConfig) {
     }
   });
 
+  // Supabase cloud sync
+  const supabaseSync = new SupabaseSyncService();
+  if (config.supabaseUrl && config.supabaseAnonKey && config.machineId) {
+    supabaseSync.initialize({
+      supabaseUrl: config.supabaseUrl,
+      supabaseAnonKey: config.supabaseAnonKey,
+      machineId: config.machineId,
+      machineName: config.machineName ?? 'unknown',
+    });
+  }
+
+  // Cloud training stats endpoint
+  app.get('/api/training/cloud-stats', async (_req, res) => {
+    if (!supabaseSync.isEnabled()) {
+      res.status(404).json({ success: false, error: 'Cloud sync not configured' });
+      return;
+    }
+    try {
+      const stats = await supabaseSync.getAggregateStats();
+      res.json({ success: true, result: stats });
+    } catch (err) {
+      res.status(500).json({ success: false, error: String(err) });
+    }
+  });
+
   // Track all connected panel WebSockets for broadcasting
   const panelConnections = new Set<WebSocket>();
   let mainPanelWs: WebSocket | null = null;
@@ -169,8 +199,26 @@ ${s.recentSessions.length > 0 ? `- Recent sessions: ${s.recentSessions.map((rs: 
               // Plugin not active or no data
             }
 
+            // Enrich with cloud aggregate data if available
+            let cloudContext = '';
+            if (supabaseSync.isEnabled()) {
+              try {
+                const cloudStats = await supabaseSync.getAggregateStats();
+                if (cloudStats && cloudStats.machineCount > 1) {
+                  cloudContext = `
+## Cross-Machine Aggregate (${cloudStats.machineCount} machines)
+- Total edits across all machines: ${cloudStats.totalEdits}
+- Total sessions: ${cloudStats.totalSessions}
+- Overall approval rate: ${cloudStats.approvalRate != null ? `${(cloudStats.approvalRate * 100).toFixed(1)}%` : 'no ratings'}
+- Edit type breakdown: ${Object.entries(cloudStats.editsByType).map(([k, v]) => `${k}: ${v}`).join(', ') || 'none'}`;
+                }
+              } catch {
+                // Cloud stats unavailable
+              }
+            }
+
             const systemPrompt = `You are an AI video editing coach integrated into Adobe Premiere Pro. You help editors understand their editing patterns and improve their skills based on training data collected during editing sessions.
-${trainingContext}
+${trainingContext}${cloudContext}
 
 Be concise, friendly, and focused on actionable editing advice. Reference the specific data when relevant.`;
 
@@ -312,5 +360,18 @@ Be concise, friendly, and focused on actionable editing advice. Reference the sp
 
   console.log(`[Mayday] ${lifecycle.getActivePlugins().length} plugin(s) activated`);
 
-  return { server, wss, lifecycle, loader, eventBus };
+  // Start Supabase sync after plugins are loaded
+  if (supabaseSync.isEnabled()) {
+    // Push on new edits
+    eventBus.on('plugin:cutting-board:feedback-request', (event) => {
+      if (event.source === 'panel') return;
+      // Debounce: sync will batch on next periodic interval, but push immediately for feedback
+      supabaseSync.pushNewData(lifecycle).catch(() => {});
+    });
+
+    // Periodic sync for rating updates, session endings, boosts
+    supabaseSync.startPeriodicSync(lifecycle, 30000);
+  }
+
+  return { server, wss, lifecycle, loader, eventBus, supabaseSync };
 }

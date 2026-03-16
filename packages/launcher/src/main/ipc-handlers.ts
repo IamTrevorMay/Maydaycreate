@@ -9,7 +9,7 @@ import { migrateSyncSource } from '@mayday/sync-engine';
 import type { BrowserWindow } from 'electron';
 import type { YouTubeAnalyzer } from './youtube/youtube-analyzer.js';
 import { registerYouTubeHandlers } from './youtube/ipc-youtube.js';
-import { checkForUpdates, installUpdate, relaunchApp } from './auto-updater.js';
+import { checkForUpdates, installUpdate, pushVersion, relaunchApp } from './auto-updater.js';
 
 let _youtubeAnalyzer: YouTubeAnalyzer | null = null;
 
@@ -164,6 +164,14 @@ export function registerIpcHandlers(): void {
     return updateConfig({ anthropicApiKey: key });
   });
 
+  ipcMain.handle('config:setSupabaseUrl', (_e, url: string) => {
+    return updateConfig({ supabaseUrl: url });
+  });
+
+  ipcMain.handle('config:setSupabaseAnonKey', (_e, key: string) => {
+    return updateConfig({ supabaseAnonKey: key });
+  });
+
   ipcMain.handle('config:migrateSyncSource', async (_e, oldPath: string, newPath: string) => {
     await migrateSyncSource(oldPath, newPath, (progress) => {
       _win?.webContents.send('config:migrationProgress', progress);
@@ -186,6 +194,12 @@ export function registerIpcHandlers(): void {
     if (!_win) throw new Error('No window available');
     const config = loadConfig();
     await installUpdate(config.sourceRepoPath, _win);
+  });
+
+  ipcMain.handle('app:pushVersion', async () => {
+    if (!_win) throw new Error('No window available');
+    const config = loadConfig();
+    return pushVersion(config.sourceRepoPath, _win);
   });
 
   ipcMain.handle('app:relaunch', () => {

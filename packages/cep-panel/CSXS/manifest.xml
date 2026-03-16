@@ -22,6 +22,7 @@
       <DispatchInfo>
         <Resources>
           <MainPath>./client/index.html</MainPath>
+          <ScriptPath>./host/index.jsx</ScriptPath>
           <CEFCommandLine>
             <Parameter>--allow-file-access-from-files</Parameter>
             <Parameter>--enable-nodejs</Parameter>
@@ -51,6 +52,7 @@
       <DispatchInfo>
         <Resources>
           <MainPath>./client/training.html</MainPath>
+          <ScriptPath>./host/index.jsx</ScriptPath>
           <CEFCommandLine>
             <Parameter>--allow-file-access-from-files</Parameter>
             <Parameter>--enable-nodejs</Parameter>

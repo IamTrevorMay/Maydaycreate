@@ -18,6 +18,7 @@ export interface UpdateProgress {
 }
 
 let _updating = false;
+let _pushing = false;
 
 function getSpawnEnv(): NodeJS.ProcessEnv {
   const env = { ...process.env };
@@ -137,6 +138,62 @@ function runStep(cmd: string, args: string[], cwd: string, win: BrowserWindow, p
 
     proc.on('error', reject);
   });
+}
+
+export interface PushResult {
+  commitHash: string;
+  hadChanges: boolean;
+}
+
+export async function pushVersion(sourceRepoPath: string, win: BrowserWindow): Promise<PushResult> {
+  if (_pushing) throw new Error('Push already in progress');
+  if (_updating) throw new Error('Update in progress');
+  _pushing = true;
+
+  let hadChanges = false;
+  let commitHash = '';
+
+  try {
+    // Check for uncommitted changes
+    sendProgress(win, { phase: 'Checking for changes', message: 'Running git status…', pct: 10, done: false });
+    const status = await runCommand('git', ['status', '--porcelain'], sourceRepoPath);
+
+    if (status.length > 0) {
+      hadChanges = true;
+
+      // Stage all changes
+      sendProgress(win, { phase: 'Staging changes', message: 'Running git add -A…', pct: 25, done: false });
+      await runStep('git', ['add', '-A'], sourceRepoPath, win, 'Staging changes');
+
+      // Commit
+      const timestamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
+      const commitMsg = `Mayday Create push — ${timestamp}`;
+      sendProgress(win, { phase: 'Committing', message: commitMsg, pct: 45, done: false });
+      await runStep('git', ['commit', '-m', commitMsg], sourceRepoPath, win, 'Committing');
+    }
+
+    // Get current commit hash
+    commitHash = (await runCommand('git', ['rev-parse', '--short', 'HEAD'], sourceRepoPath)).trim();
+
+    // Push to origin
+    sendProgress(win, { phase: 'Pushing to origin', message: 'Running git push origin main…', pct: 70, done: false });
+    await runStep('git', ['push', 'origin', 'main'], sourceRepoPath, win, 'Pushing to origin');
+
+    sendProgress(win, {
+      phase: 'Complete',
+      message: `Push complete! Commit: ${commitHash}${hadChanges ? ' (new commit)' : ' (already up to date)'}`,
+      pct: 100,
+      done: true,
+    });
+
+    return { commitHash, hadChanges };
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    sendProgress(win, { phase: 'Error', message: msg, pct: 0, done: true, error: msg });
+    throw err;
+  } finally {
+    _pushing = false;
+  }
 }
 
 export function relaunchApp(): void {

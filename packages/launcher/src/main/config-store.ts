@@ -12,6 +12,8 @@ export interface LauncherConfig {
   startMinimized: boolean;
   anthropicApiKey: string;
   sourceRepoPath: string;
+  supabaseUrl: string;
+  supabaseAnonKey: string;
 }
 
 const DEFAULTS: LauncherConfig = {
@@ -23,6 +25,8 @@ const DEFAULTS: LauncherConfig = {
   startMinimized: true,
   anthropicApiKey: '',
   sourceRepoPath: '/Users/trevor/Desktop/MaydayCreate',
+  supabaseUrl: '',
+  supabaseAnonKey: '',
 };
 
 function getConfigPath(): string {

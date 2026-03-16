@@ -335,5 +335,23 @@ export default definePlugin({
       ctx.log.info(`Exported data to ${exportPath}`);
       return { path: exportPath, sessions: data.sessions.length, records: data.records.length };
     },
+
+    'sync-data': async (ctx) => {
+      if (!db) {
+        db = new CuttingBoardDB(ctx.dataDir);
+      }
+      const sessions = db.getUnsyncedSessions();
+      const records = db.getUnsyncedRecords(500);
+      return { sessions, records };
+    },
+
+    'mark-synced': async (ctx, args) => {
+      if (!db) {
+        db = new CuttingBoardDB(ctx.dataDir);
+      }
+      const { table, ids } = args as { table: 'sessions' | 'cut_records'; ids: number[] };
+      db.markSynced(table, ids);
+      return { marked: ids.length };
+    },
   },
 });

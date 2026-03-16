@@ -27,6 +27,18 @@ interface AggregateStats {
   }>;
 }
 
+interface CloudStats {
+  totalEdits: number;
+  totalSessions: number;
+  approvalRate: number | null;
+  thumbsUp: number;
+  thumbsDown: number;
+  boostedCount: number;
+  undoRate: number;
+  editsByType: Record<string, number>;
+  machineCount: number;
+}
+
 interface ChatMessage {
   role: 'user' | 'assistant';
   content: string;
@@ -44,6 +56,8 @@ const colors = {
 
 export function TrainingDashboard({ connected, send, onMessage }: Props) {
   const [stats, setStats] = useState<AggregateStats | null>(null);
+  const [cloudStats, setCloudStats] = useState<CloudStats | null>(null);
+  const [viewMode, setViewMode] = useState<'local' | 'cloud'>('local');
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [input, setInput] = useState('');
   const [streaming, setStreaming] = useState(false);
@@ -64,6 +78,17 @@ export function TrainingDashboard({ connected, send, onMessage }: Props) {
       }
     } catch {
       // Server not available
+    }
+
+    // Also fetch cloud stats
+    try {
+      const cloudRes = await fetch('http://localhost:9876/api/training/cloud-stats');
+      const cloudData = await cloudRes.json();
+      if (cloudData.success && cloudData.result) {
+        setCloudStats(cloudData.result);
+      }
+    } catch {
+      // Cloud sync not configured or unavailable
     }
   }, []);
 
@@ -133,27 +158,66 @@ export function TrainingDashboard({ connected, send, onMessage }: Props) {
     });
   };
 
-  const maxEditCount = stats
-    ? Math.max(1, ...EDIT_TYPES.map(t => stats.editsByType[t] || 0))
+  // Use cloud stats when viewing "All Machines", local otherwise
+  const activeStats = viewMode === 'cloud' && cloudStats ? cloudStats : stats;
+
+  const maxEditCount = activeStats
+    ? Math.max(1, ...EDIT_TYPES.map(t => activeStats.editsByType[t] || 0))
     : 1;
 
   return (
     <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
       {/* Stats Section */}
       <div style={{ flex: '0 0 auto', maxHeight: '40%', overflow: 'auto', paddingBottom: 8, borderBottom: `1px solid ${colors.border}` }}>
+        {/* View Toggle */}
+        {cloudStats && (
+          <div style={{ display: 'flex', gap: 4, marginBottom: 6 }}>
+            <button
+              onClick={() => setViewMode('local')}
+              style={{
+                flex: 1,
+                padding: '3px 0',
+                fontSize: 9,
+                border: 'none',
+                borderRadius: 3,
+                cursor: 'pointer',
+                background: viewMode === 'local' ? colors.accent : colors.bg.tertiary,
+                color: viewMode === 'local' ? '#fff' : colors.text.secondary,
+              }}
+            >
+              This Machine
+            </button>
+            <button
+              onClick={() => setViewMode('cloud')}
+              style={{
+                flex: 1,
+                padding: '3px 0',
+                fontSize: 9,
+                border: 'none',
+                borderRadius: 3,
+                cursor: 'pointer',
+                background: viewMode === 'cloud' ? colors.accent : colors.bg.tertiary,
+                color: viewMode === 'cloud' ? '#fff' : colors.text.secondary,
+              }}
+            >
+              All Machines ({cloudStats.machineCount})
+            </button>
+          </div>
+        )}
+
         {/* Stat Cards */}
         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 6, marginBottom: 8 }}>
-          <StatCard label="Total Edits" value={stats?.totalEdits ?? '\u2014'} />
-          <StatCard label="Approval" value={stats?.approvalRate != null ? `${(stats.approvalRate * 100).toFixed(0)}%` : '\u2014'} />
-          <StatCard label="Sessions" value={stats?.totalSessions ?? '\u2014'} />
-          <StatCard label="Boosted" value={stats?.boostedCount ?? '\u2014'} />
+          <StatCard label="Total Edits" value={activeStats?.totalEdits ?? '\u2014'} />
+          <StatCard label="Approval" value={activeStats?.approvalRate != null ? `${(activeStats.approvalRate * 100).toFixed(0)}%` : '\u2014'} />
+          <StatCard label="Sessions" value={activeStats?.totalSessions ?? '\u2014'} />
+          <StatCard label="Boosted" value={activeStats?.boostedCount ?? '\u2014'} />
         </div>
 
         {/* Edit Type Breakdown */}
         <div style={{ marginBottom: 8 }}>
           <div style={{ fontSize: 10, color: colors.text.secondary, marginBottom: 4 }}>Edit Types</div>
           {EDIT_TYPES.map(type => {
-            const count = stats?.editsByType[type] || 0;
+            const count = activeStats?.editsByType[type] || 0;
             return (
               <div key={type} style={{ display: 'flex', alignItems: 'center', marginBottom: 2 }}>
                 <span style={{ fontSize: 10, width: 60, color: colors.text.secondary }}>{type}</span>
@@ -176,8 +240,8 @@ export function TrainingDashboard({ connected, send, onMessage }: Props) {
         <div>
           <div style={{ fontSize: 10, color: colors.text.secondary, marginBottom: 4 }}>Approval</div>
           {(() => {
-            const up = stats?.thumbsUp ?? 0;
-            const down = stats?.thumbsDown ?? 0;
+            const up = activeStats?.thumbsUp ?? 0;
+            const down = activeStats?.thumbsDown ?? 0;
             const total = up + down;
             const upPct = total > 0 ? (up / total) * 100 : 0;
             return (

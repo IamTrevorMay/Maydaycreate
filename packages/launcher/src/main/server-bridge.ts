@@ -56,6 +56,10 @@ export async function startEmbeddedServer(opts: {
   port: number;
   isDev: boolean;
   resourcesPath: string;
+  supabaseUrl?: string;
+  supabaseAnonKey?: string;
+  machineId?: string;
+  machineName?: string;
 }): Promise<ServerBridge> {
   if (_bridge) return _bridge;
 
@@ -82,6 +86,10 @@ export async function startEmbeddedServer(opts: {
     port: opts.port,
     pluginsDir,
     dataDir,
+    supabaseUrl: opts.supabaseUrl,
+    supabaseAnonKey: opts.supabaseAnonKey,
+    machineId: opts.machineId,
+    machineName: opts.machineName,
   });
 
   // Patch port onto serverInstance so makeStatus() can read it

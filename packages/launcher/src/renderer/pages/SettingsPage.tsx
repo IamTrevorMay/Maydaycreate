@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { useIpc } from '../hooks/useIpc.js';
 import { MigrationWizard } from '../components/MigrationWizard.js';
 import { UpdateWizard } from '../components/UpdateWizard.js';
+import { PushWizard } from '../components/PushWizard.js';
 import type { LauncherConfig } from '../../main/config-store.js';
 import { c } from '../styles.js';
 
@@ -10,10 +11,14 @@ export function SettingsPage(): React.ReactElement {
   const [config, setConfig] = useState<LauncherConfig | null>(null);
   const [showMigration, setShowMigration] = useState(false);
   const [showUpdateWizard, setShowUpdateWizard] = useState(false);
+  const [showPushWizard, setShowPushWizard] = useState(false);
   const [apiKey, setApiKey] = useState('');
   const [apiKeyStatus, setApiKeyStatus] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle');
   const [apiKeyError, setApiKeyError] = useState('');
   const [hasStoredKey, setHasStoredKey] = useState(false);
+  const [supabaseUrl, setSupabaseUrl] = useState('');
+  const [supabaseKey, setSupabaseKey] = useState('');
+  const [cloudSyncStatus, setCloudSyncStatus] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle');
   const [appVersion, setAppVersion] = useState('…');
   const [updateStatus, setUpdateStatus] = useState<'idle' | 'checking' | 'up-to-date' | 'available' | 'error'>('idle');
   const [updateInfo, setUpdateInfo] = useState<{ commitsBehind: number; currentCommit: string; latestCommit: string } | null>(null);
@@ -142,22 +147,38 @@ export function SettingsPage(): React.ReactElement {
         <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
             <span style={{ fontSize: 12, color: c.text.primary }}>Current version: {appVersion}</span>
-            <button
-              onClick={checkForUpdates}
-              disabled={updateStatus === 'checking'}
-              style={{
-                padding: '3px 10px',
-                borderRadius: 4,
-                border: 'none',
-                fontSize: 11,
-                cursor: updateStatus === 'checking' ? 'default' : 'pointer',
-                background: c.accent.primary,
-                color: '#fff',
-                opacity: updateStatus === 'checking' ? 0.6 : 1,
-              }}
-            >
-              {updateStatus === 'checking' ? 'Checking…' : 'Check for Updates'}
-            </button>
+            <div style={{ display: 'flex', gap: 6 }}>
+              <button
+                onClick={() => setShowPushWizard(true)}
+                style={{
+                  padding: '3px 10px',
+                  borderRadius: 4,
+                  border: '1px solid #444',
+                  fontSize: 11,
+                  cursor: 'pointer',
+                  background: 'transparent',
+                  color: '#999',
+                }}
+              >
+                Push Version
+              </button>
+              <button
+                onClick={checkForUpdates}
+                disabled={updateStatus === 'checking'}
+                style={{
+                  padding: '3px 10px',
+                  borderRadius: 4,
+                  border: 'none',
+                  fontSize: 11,
+                  cursor: updateStatus === 'checking' ? 'default' : 'pointer',
+                  background: c.accent.primary,
+                  color: '#fff',
+                  opacity: updateStatus === 'checking' ? 0.6 : 1,
+                }}
+              >
+                {updateStatus === 'checking' ? 'Checking…' : 'Check for Updates'}
+              </button>
+            </div>
           </div>
           {updateStatus === 'up-to-date' && (
             <span style={{ fontSize: 11, color: c.status.success }}>Up to date ({updateInfo?.currentCommit})</span>
@@ -266,6 +287,113 @@ export function SettingsPage(): React.ReactElement {
         </div>
       </Section>
 
+      {/* Cloud Sync */}
+      <Section title="Cloud Sync">
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+            <span style={{ fontSize: 12, color: c.text.secondary }}>Supabase Connection</span>
+            {config.supabaseUrl && config.supabaseAnonKey && cloudSyncStatus !== 'saved' && (
+              <span style={{ fontSize: 10, color: c.status.success, display: 'flex', alignItems: 'center', gap: 4 }}>
+                <span style={{ width: 6, height: 6, borderRadius: '50%', background: c.status.success, display: 'inline-block' }} />
+                Configured
+              </span>
+            )}
+            {cloudSyncStatus === 'saved' && (
+              <span style={{ fontSize: 10, color: c.status.success }}>Saved (restart to apply)</span>
+            )}
+          </div>
+          <input
+            type="text"
+            value={supabaseUrl}
+            onChange={(e) => { setSupabaseUrl(e.target.value); setCloudSyncStatus('idle'); }}
+            placeholder={config.supabaseUrl || 'https://xxxx.supabase.co'}
+            style={{
+              padding: '6px 10px',
+              borderRadius: 4,
+              border: `1px solid ${c.border.default}`,
+              background: c.bg.primary,
+              color: c.text.primary,
+              fontSize: 12,
+              fontFamily: 'monospace',
+              outline: 'none',
+            }}
+          />
+          <input
+            type="password"
+            value={supabaseKey}
+            onChange={(e) => { setSupabaseKey(e.target.value); setCloudSyncStatus('idle'); }}
+            placeholder={config.supabaseAnonKey ? 'Enter new key to replace...' : 'eyJ...'}
+            style={{
+              padding: '6px 10px',
+              borderRadius: 4,
+              border: `1px solid ${c.border.default}`,
+              background: c.bg.primary,
+              color: c.text.primary,
+              fontSize: 12,
+              fontFamily: 'monospace',
+              outline: 'none',
+            }}
+          />
+          <div style={{ display: 'flex', gap: 8 }}>
+            <button
+              onClick={async () => {
+                setCloudSyncStatus('saving');
+                try {
+                  if (supabaseUrl.trim()) await ipc.config.setSupabaseUrl(supabaseUrl.trim());
+                  if (supabaseKey.trim()) await ipc.config.setSupabaseAnonKey(supabaseKey.trim());
+                  const updated = await ipc.config.get();
+                  setConfig(updated);
+                  setSupabaseUrl('');
+                  setSupabaseKey('');
+                  setCloudSyncStatus('saved');
+                  setTimeout(() => setCloudSyncStatus('idle'), 3000);
+                } catch {
+                  setCloudSyncStatus('error');
+                }
+              }}
+              disabled={(!supabaseUrl.trim() && !supabaseKey.trim()) || cloudSyncStatus === 'saving'}
+              style={{
+                padding: '6px 14px',
+                borderRadius: 4,
+                border: 'none',
+                fontSize: 11,
+                cursor: (supabaseUrl.trim() || supabaseKey.trim()) ? 'pointer' : 'default',
+                background: c.accent.primary,
+                color: '#fff',
+                opacity: (supabaseUrl.trim() || supabaseKey.trim()) ? 1 : 0.5,
+              }}
+            >
+              Save
+            </button>
+            {config.supabaseUrl && (
+              <button
+                onClick={async () => {
+                  await ipc.config.setSupabaseUrl('');
+                  await ipc.config.setSupabaseAnonKey('');
+                  const updated = await ipc.config.get();
+                  setConfig(updated);
+                  setCloudSyncStatus('idle');
+                }}
+                style={{
+                  padding: '6px 10px',
+                  borderRadius: 4,
+                  border: `1px solid ${c.border.default}`,
+                  background: 'transparent',
+                  fontSize: 11,
+                  cursor: 'pointer',
+                  color: c.text.secondary,
+                }}
+              >
+                Clear
+              </button>
+            )}
+          </div>
+          <span style={{ fontSize: 10, color: c.text.disabled }}>
+            Syncs training data across machines. Requires app restart after changing.
+          </span>
+        </div>
+      </Section>
+
       {/* Source Repository */}
       <Section title="Source Repository">
         <Row label="Path" value={config.sourceRepoPath || 'Not configured'} mono />
@@ -292,6 +420,13 @@ export function SettingsPage(): React.ReactElement {
           latestCommit={updateInfo.latestCommit}
           onDone={() => setShowUpdateWizard(false)}
           onCancel={() => setShowUpdateWizard(false)}
+        />
+      )}
+
+      {showPushWizard && (
+        <PushWizard
+          onDone={() => setShowPushWizard(false)}
+          onCancel={() => setShowPushWizard(false)}
         />
       )}
     </div>

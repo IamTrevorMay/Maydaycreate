@@ -58,6 +58,15 @@ export class CuttingBoardDB {
         UPDATE cut_records SET rating = 1 WHERE rating IS NOT NULL AND rating >= 3;
       `);
     }
+
+    // Migration: add synced_at columns for cloud sync
+    if (!cols.some(c => c.name === 'synced_at')) {
+      this.db.exec(`ALTER TABLE cut_records ADD COLUMN synced_at INTEGER;`);
+    }
+    const sessionCols = this.db.prepare("PRAGMA table_info(sessions)").all() as { name: string }[];
+    if (!sessionCols.some(c => c.name === 'synced_at')) {
+      this.db.exec(`ALTER TABLE sessions ADD COLUMN synced_at INTEGER;`);
+    }
   }
 
   createSession(sequenceId: string, sequenceName: string): number {
@@ -317,6 +326,27 @@ export class CuttingBoardDB {
       }
       return { ...r, quality, weight };
     });
+  }
+
+  getUnsyncedSessions(): Array<Record<string, unknown>> {
+    return this.db.prepare(
+      'SELECT * FROM sessions WHERE synced_at IS NULL'
+    ).all() as Array<Record<string, unknown>>;
+  }
+
+  getUnsyncedRecords(limit = 500): Array<Record<string, unknown>> {
+    return this.db.prepare(
+      'SELECT cr.*, s.sequence_id, s.sequence_name FROM cut_records cr JOIN sessions s ON cr.session_id = s.id WHERE cr.synced_at IS NULL LIMIT ?'
+    ).all(limit) as Array<Record<string, unknown>>;
+  }
+
+  markSynced(table: 'sessions' | 'cut_records', ids: number[]): void {
+    if (ids.length === 0) return;
+    const now = Date.now();
+    const placeholders = ids.map(() => '?').join(',');
+    this.db.prepare(
+      `UPDATE ${table} SET synced_at = ? WHERE id IN (${placeholders})`
+    ).run(now, ...ids);
   }
 
   close(): void {
