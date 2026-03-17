@@ -209,7 +209,11 @@ export class YouTubeDB {
   }
 
   listAnalyses(): VideoAnalysisSummary[] {
-    const rows = this.db.prepare('SELECT id, title, channel, duration, thumbnail_url, thumbnail_path, status, effect_count, created_at FROM analyses ORDER BY created_at DESC').all() as Record<string, unknown>[];
+    const rows = this.db.prepare(`
+      SELECT a.id, a.title, a.channel, a.duration, a.thumbnail_url, a.thumbnail_path, a.status, a.effect_count, a.created_at,
+        (SELECT COUNT(*) FROM effects WHERE analysis_id = a.id AND rating IS NOT NULL) as rated_count
+      FROM analyses a ORDER BY a.created_at DESC
+    `).all() as Record<string, unknown>[];
     return rows.map(r => ({
       id: r.id as string,
       title: r.title as string,
@@ -219,6 +223,7 @@ export class YouTubeDB {
       thumbnailPath: (r.thumbnail_path as string) || '',
       status: r.status as AnalysisStatus,
       effectCount: (r.effect_count as number) || 0,
+      ratedCount: (r.rated_count as number) || 0,
       createdAt: r.created_at as string,
     }));
   }

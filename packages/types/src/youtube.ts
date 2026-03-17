@@ -66,6 +66,7 @@ export interface VideoAnalysisSummary {
   thumbnailPath: string;
   status: AnalysisStatus;
   effectCount: number;
+  ratedCount: number;
   createdAt: string;
 }
 

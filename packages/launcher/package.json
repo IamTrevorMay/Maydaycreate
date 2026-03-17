@@ -23,7 +23,8 @@
     "@supabase/supabase-js": "^2.99.2",
     "@anthropic-ai/sdk": "^0.78.0",
     "brain.js": "^2.0.0-beta.23",
-    "gpu.js": "^2.16.0"
+    "gpu.js": "^2.16.0",
+    "electron-updater": "^6.1.0"
   },
   "devDependencies": {
     "@electron-toolkit/preload": "^3.0.0",
@@ -72,6 +73,12 @@
           "arch": [
             "arm64"
           ]
+        },
+        {
+          "target": "zip",
+          "arch": [
+            "arm64"
+          ]
         }
       ],
       "icon": "resources/icon.icns",
@@ -87,6 +94,11 @@
         { "x": 130, "y": 220 },
         { "x": 410, "y": 220, "type": "link", "path": "/Applications" }
       ]
+    },
+    "publish": {
+      "provider": "github",
+      "owner": "IamTrevorMay",
+      "repo": "Maydaycreate"
     },
     "npmRebuild": true,
     "electronVersion": "31.7.7"

@@ -9,11 +9,10 @@ import { AnalysisCard } from '../components/youtube/AnalysisCard.js';
 import { BatchQueue } from '../components/youtube/BatchQueue.js';
 import type { DetectedEffect, EffectCategory } from '@mayday/types';
 
-type Tab = 'analyze' | 'queue' | 'library' | 'training';
+type Tab = 'analyze' | 'library' | 'training';
 
 const TABS: { id: Tab; label: string }[] = [
   { id: 'analyze', label: 'Analyze' },
-  { id: 'queue', label: 'Queue' },
   { id: 'library', label: 'Library' },
   { id: 'training', label: 'Training' },
 ];
@@ -159,17 +158,6 @@ export function YouTubePage(): React.ReactElement {
             }}
           >
             {t.label}
-            {t.id === 'queue' && yt.queue.length > 0 && (
-              <span style={{
-                marginLeft: 6,
-                padding: '0 5px',
-                background: c.bg.elevated,
-                borderRadius: 8,
-                fontSize: 10,
-              }}>
-                {yt.queue.length}
-              </span>
-            )}
           </button>
         ))}
       </div>
@@ -246,6 +234,52 @@ export function YouTubePage(): React.ReactElement {
               loading={yt.loading}
               skipCuts={skipCuts}
             />
+
+            {/* Unrated analyses banner */}
+            {(() => {
+              const unrated = yt.analyses.filter(a => a.status === 'complete' && a.ratedCount < a.effectCount && a.effectCount > 0);
+              if (unrated.length === 0) return null;
+              return (
+                <div style={{ padding: '0 20px 12px' }}>
+                  <div style={{ fontSize: 12, fontWeight: 600, color: c.text.primary, marginBottom: 8 }}>
+                    Needs Rating ({unrated.length})
+                  </div>
+                  <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                    {unrated.map(a => {
+                      const pct = a.effectCount > 0 ? Math.round((a.ratedCount / a.effectCount) * 100) : 0;
+                      return (
+                        <button
+                          key={a.id}
+                          onClick={() => yt.openAnalysis(a.id)}
+                          style={{
+                            display: 'flex',
+                            flexDirection: 'column',
+                            gap: 4,
+                            padding: '8px 12px',
+                            background: c.bg.elevated,
+                            border: `1px solid ${c.border.default}`,
+                            borderRadius: 6,
+                            cursor: 'pointer',
+                            textAlign: 'left',
+                            minWidth: 160,
+                          }}
+                        >
+                          <span style={{ color: c.text.primary, fontSize: 11, fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: 180 }}>
+                            {a.title}
+                          </span>
+                          <span style={{ color: c.text.secondary, fontSize: 10 }}>
+                            {a.ratedCount}/{a.effectCount} rated ({pct}%)
+                          </span>
+                          <div style={{ height: 3, background: c.bg.tertiary, borderRadius: 2, width: '100%' }}>
+                            <div style={{ height: '100%', width: `${pct}%`, background: pct === 100 ? c.status.success : c.accent.primary, borderRadius: 2 }} />
+                          </div>
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+              );
+            })()}
 
             {yt.progress && (isAnalyzing || isPaused) && (
               <AnalysisProgress
@@ -343,20 +377,66 @@ export function YouTubePage(): React.ReactElement {
                       hasPrev={selectedIndex > 0}
                       hasNext={selectedIndex < filteredEffects.length - 1}
                       effectPosition={selectedIndex >= 0 ? `${selectedIndex + 1} / ${filteredEffects.length}` : undefined}
+                      trainingStats={yt.trainingStats}
                     />
                   </div>
                 )}
               </div>
             )}
-          </div>
-        )}
 
-        {tab === 'queue' && (
-          <BatchQueue
-            queue={yt.queue}
-            onRemove={yt.removeFromQueue}
-            onProcess={yt.processQueue}
-          />
+            {/* Inline queue */}
+            {yt.queue.length > 0 && (
+              <div style={{ padding: '12px 20px', borderTop: `1px solid ${c.border.default}`, marginTop: 12 }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
+                  <span style={{ fontSize: 12, fontWeight: 600, color: c.text.primary }}>
+                    Queue ({yt.queue.length})
+                  </span>
+                  <button
+                    onClick={yt.processQueue}
+                    style={{
+                      padding: '4px 12px',
+                      background: c.accent.primary,
+                      color: '#fff',
+                      border: 'none',
+                      borderRadius: 4,
+                      fontSize: 11,
+                      fontWeight: 600,
+                      cursor: 'pointer',
+                    }}
+                  >
+                    Process All
+                  </button>
+                </div>
+                {yt.queue.map(item => (
+                  <div key={item.id} style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: 8,
+                    padding: '6px 0',
+                    borderBottom: `1px solid ${c.border.default}`,
+                  }}>
+                    <span style={{
+                      width: 6,
+                      height: 6,
+                      borderRadius: '50%',
+                      background: item.status === 'processing' ? c.accent.primary : item.status === 'complete' ? c.status.success : item.status === 'error' ? c.status.error : c.text.disabled,
+                      flexShrink: 0,
+                    }} />
+                    <span style={{ flex: 1, fontSize: 11, color: c.text.primary, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                      {item.title || item.url}
+                    </span>
+                    <span style={{ fontSize: 10, color: c.text.secondary }}>{item.status}</span>
+                    <button
+                      onClick={() => yt.removeFromQueue(item.id)}
+                      style={{ background: 'transparent', border: 'none', color: c.text.disabled, fontSize: 12, cursor: 'pointer', padding: '2px 4px' }}
+                    >
+                      x
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
         )}
 
         {tab === 'library' && (
@@ -376,6 +456,7 @@ export function YouTubePage(): React.ReactElement {
                     analysis={a}
                     onClick={() => { yt.openAnalysis(a.id); setTab('analyze'); }}
                     onDelete={() => yt.deleteAnalysis(a.id)}
+                    progress={yt.progress?.analysisId === a.id ? yt.progress : undefined}
                   />
                 ))}
               </div>

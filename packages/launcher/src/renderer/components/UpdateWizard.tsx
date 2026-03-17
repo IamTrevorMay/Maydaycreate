@@ -3,9 +3,8 @@ import { useIpc } from '../hooks/useIpc.js';
 import { c } from '../styles.js';
 
 interface Props {
-  commitsBehind: number;
-  currentCommit: string;
-  latestCommit: string;
+  currentVersion: string;
+  latestVersion: string;
   onDone: () => void;
   onCancel: () => void;
 }
@@ -20,7 +19,7 @@ interface ProgressEvent {
   error?: string;
 }
 
-export function UpdateWizard({ commitsBehind, currentCommit, latestCommit, onDone, onCancel }: Props): React.ReactElement {
+export function UpdateWizard({ currentVersion, latestVersion, onDone, onCancel }: Props): React.ReactElement {
   const ipc = useIpc();
   const [step, setStep] = useState<Step>('confirm');
   const [phase, setPhase] = useState('');
@@ -58,7 +57,7 @@ export function UpdateWizard({ commitsBehind, currentCommit, latestCommit, onDon
     setErrorMsg('');
     setPct(0);
     try {
-      await ipc.app.installUpdate();
+      await ipc.app.downloadUpdate();
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       if (step !== 'error') {
@@ -69,7 +68,7 @@ export function UpdateWizard({ commitsBehind, currentCommit, latestCommit, onDon
   };
 
   const handleRestart = () => {
-    ipc.app.relaunch();
+    ipc.app.quitAndInstall();
   };
 
   const retry = () => {
@@ -87,10 +86,7 @@ export function UpdateWizard({ commitsBehind, currentCommit, latestCommit, onDon
         {step === 'confirm' && (
           <>
             <p style={{ color: c.text.secondary, fontSize: 12 }}>
-              {commitsBehind} commit{commitsBehind !== 1 ? 's' : ''} behind ({currentCommit} &rarr; {latestCommit})
-            </p>
-            <p style={{ color: c.text.secondary, fontSize: 12 }}>
-              This will pull the latest code, rebuild, and reinstall the app. The process may take a few minutes.
+              Update v{currentVersion} &rarr; v{latestVersion}. Downloads and installs automatically.
             </p>
             <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
               <button onClick={onCancel} style={secondaryBtn}>Cancel</button>
@@ -113,8 +109,8 @@ export function UpdateWizard({ commitsBehind, currentCommit, latestCommit, onDon
 
         {step === 'done' && (
           <>
-            <p style={{ color: c.status.success, fontSize: 13 }}>Update installed successfully!</p>
-            <p style={{ color: c.text.secondary, fontSize: 12 }}>Restart the app to use the new version.</p>
+            <p style={{ color: c.status.success, fontSize: 13 }}>Update downloaded!</p>
+            <p style={{ color: c.text.secondary, fontSize: 12 }}>Restart the app to use v{latestVersion}.</p>
             <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
               <button onClick={onDone} style={secondaryBtn}>Later</button>
               <button onClick={handleRestart} style={primaryBtn}>Restart Now</button>

@@ -14,10 +14,26 @@ export function usePlugins() {
   }, [ipc]);
 
   useEffect(() => {
-    refresh();
+    let retryCount = 0;
+    let retryTimer: ReturnType<typeof setTimeout> | null = null;
+
+    const initialFetch = async () => {
+      const all = await ipc.plugins.getAll();
+      setPlugins(all);
+      setLoading(false);
+      if (all.length === 0 && retryCount < 5) {
+        retryCount++;
+        retryTimer = setTimeout(initialFetch, 2000);
+      }
+    };
+
+    initialFetch();
     const unsub = ipc.plugins.onChanged(setPlugins);
-    return unsub;
-  }, [refresh, ipc]);
+    return () => {
+      unsub();
+      if (retryTimer) clearTimeout(retryTimer);
+    };
+  }, [ipc]);
 
   const enable = useCallback(async (id: string) => {
     await ipc.plugins.enable(id);

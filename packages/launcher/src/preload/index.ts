@@ -85,6 +85,8 @@ const mayday = {
       ipcRenderer.invoke('config:setSupabaseAnonKey', key),
     setAutoUpdate: (enabled: boolean): Promise<LauncherConfig> =>
       ipcRenderer.invoke('config:setAutoUpdate', enabled),
+    setGhToken: (token: string): Promise<LauncherConfig> =>
+      ipcRenderer.invoke('config:setGhToken', token),
     migrateSyncSource: (oldPath: string, newPath: string): Promise<LauncherConfig> =>
       ipcRenderer.invoke('config:migrateSyncSource', oldPath, newPath),
     onMigrationProgress: (cb: (progress: MigrationProgress) => void) => {
@@ -104,12 +106,13 @@ const mayday = {
       ipcRenderer.invoke('app:getVersion'),
     checkForUpdates: (): Promise<{
       updateAvailable: boolean;
-      currentCommit: string;
-      latestCommit: string;
-      commitsBehind: number;
+      currentVersion: string;
+      latestVersion: string;
     }> => ipcRenderer.invoke('app:checkForUpdates'),
     installUpdate: (): Promise<void> => ipcRenderer.invoke('app:installUpdate'),
-    pushVersion: (): Promise<{ commitHash: string; hadChanges: boolean }> =>
+    downloadUpdate: (): Promise<void> => ipcRenderer.invoke('app:downloadUpdate'),
+    quitAndInstall: (): Promise<void> => ipcRenderer.invoke('app:quitAndInstall'),
+    pushVersion: (): Promise<{ commitHash: string; hadChanges: boolean; publishedVersion: string }> =>
       ipcRenderer.invoke('app:pushVersion'),
     relaunch: (): Promise<void> => ipcRenderer.invoke('app:relaunch'),
     onUpdateProgress: (cb: (progress: { phase: string; message: string; pct: number; done: boolean; error?: string }) => void) => {

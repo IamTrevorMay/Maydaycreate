@@ -2,6 +2,7 @@ import { ipcMain, app } from 'electron';
 import path from 'path';
 import fs from 'fs';
 import Database from 'better-sqlite3';
+import { createClient } from '@supabase/supabase-js';
 import { loadConfig } from './config-store.js';
 import type { CuttingBoardAggregateStats, CuttingBoardTrainingRun } from '@mayday/types';
 
@@ -15,47 +16,112 @@ function openDb(): Database.Database | null {
   return new Database(dbPath, { readonly: true });
 }
 
-function getAggregateStats(): CuttingBoardAggregateStats | null {
-  const db = openDb();
-  if (!db) return null;
+async function getAggregateStats(): Promise<CuttingBoardAggregateStats | null> {
+  const config = loadConfig();
+  if (!config.supabaseUrl || !config.supabaseAnonKey) return null;
+
+  const supabase = createClient(config.supabaseUrl, config.supabaseAnonKey);
 
   try {
-    const totalEdits = (db.prepare('SELECT COUNT(*) as c FROM cut_records WHERE is_undo = 0').get() as { c: number }).c;
-    const totalSessions = (db.prepare('SELECT COUNT(*) as c FROM sessions').get() as { c: number }).c;
+    // Total edits
+    const { count: totalEdits } = await supabase
+      .from('cut_records')
+      .select('*', { count: 'exact', head: true });
 
-    const rated = db.prepare('SELECT rating FROM cut_records WHERE rating IS NOT NULL AND is_undo = 0').all() as { rating: number }[];
-    const thumbsUp = rated.filter(r => r.rating >= 4).length;
-    const thumbsDown = rated.filter(r => r.rating <= 2).length;
-    const approvalRate = rated.length > 0 ? thumbsUp / rated.length : null;
+    // Total sessions
+    const { count: totalSessions } = await supabase
+      .from('sessions')
+      .select('*', { count: 'exact', head: true });
 
-    const boostedCount = (db.prepare('SELECT COUNT(*) as c FROM cut_records WHERE boosted = 1').get() as { c: number }).c;
+    // Thumbs up (rating = 1)
+    const { count: thumbsUp } = await supabase
+      .from('cut_records')
+      .select('*', { count: 'exact', head: true })
+      .eq('rating', 1);
 
-    const totalWithUndo = (db.prepare('SELECT COUNT(*) as c FROM cut_records').get() as { c: number }).c;
-    const undos = (db.prepare('SELECT COUNT(*) as c FROM cut_records WHERE is_undo = 1').get() as { c: number }).c;
-    const undoRate = totalWithUndo > 0 ? undos / totalWithUndo : 0;
+    // Thumbs down (rating = 0)
+    const { count: thumbsDown } = await supabase
+      .from('cut_records')
+      .select('*', { count: 'exact', head: true })
+      .eq('rating', 0);
 
-    const typeRows = db.prepare('SELECT edit_type, COUNT(*) as c FROM cut_records WHERE is_undo = 0 GROUP BY edit_type').all() as { edit_type: string; c: number }[];
+    // Boosted
+    const { count: boostedCount } = await supabase
+      .from('cut_records')
+      .select('*', { count: 'exact', head: true })
+      .eq('boosted', true);
+
+    // Undo count
+    const { count: undoCount } = await supabase
+      .from('cut_records')
+      .select('*', { count: 'exact', head: true })
+      .eq('is_undo', true);
+
+    // Edit type breakdown via RPC
+    const { data: editTypes } = await supabase.rpc('get_edit_type_counts');
+
+    const rated = (thumbsUp ?? 0) + (thumbsDown ?? 0);
+    const approvalRate = rated > 0 ? (thumbsUp ?? 0) / rated : null;
+    const total = totalEdits ?? 0;
+    const undoRate = total > 0 ? (undoCount ?? 0) / total : 0;
+
     const editsByType: Record<string, number> = {};
-    for (const r of typeRows) editsByType[r.edit_type] = r.c;
+    if (editTypes) {
+      for (const row of editTypes) {
+        editsByType[row.edit_type] = Number(row.count);
+      }
+    }
 
-    const recentRows = db.prepare(`
-      SELECT s.id, s.sequence_name, s.started_at, s.total_edits,
-        (SELECT CAST(SUM(CASE WHEN cr.rating >= 4 THEN 1 ELSE 0 END) AS REAL) / NULLIF(COUNT(cr.rating), 0)
-         FROM cut_records cr WHERE cr.session_id = s.id AND cr.rating IS NOT NULL AND cr.is_undo = 0) as approval_rate
-      FROM sessions s ORDER BY s.started_at DESC LIMIT 5
-    `).all() as { id: number; sequence_name: string; started_at: number; total_edits: number; approval_rate: number | null }[];
+    // Recent sessions with approval rates
+    const { data: sessionRows } = await supabase
+      .from('sessions')
+      .select('id, sequence_name, started_at, total_edits')
+      .order('started_at', { ascending: false })
+      .limit(5);
 
-    const recentSessions = recentRows.map(r => ({
-      id: r.id,
-      sequenceName: r.sequence_name,
-      startedAt: r.started_at,
-      totalEdits: r.total_edits,
-      approvalRate: r.approval_rate,
-    }));
+    const recentSessions: CuttingBoardAggregateStats['recentSessions'] = [];
+    if (sessionRows) {
+      for (const s of sessionRows) {
+        // Compute approval rate for each session
+        const { count: sessionUp } = await supabase
+          .from('cut_records')
+          .select('*', { count: 'exact', head: true })
+          .eq('session_id', s.id)
+          .eq('rating', 1);
 
-    return { totalEdits, totalSessions, approvalRate, thumbsUp, thumbsDown, boostedCount, undoRate, editsByType, recentSessions };
-  } finally {
-    db.close();
+        const { count: sessionDown } = await supabase
+          .from('cut_records')
+          .select('*', { count: 'exact', head: true })
+          .eq('session_id', s.id)
+          .eq('rating', 0);
+
+        const sessionRated = (sessionUp ?? 0) + (sessionDown ?? 0);
+        const sessionApproval = sessionRated > 0 ? (sessionUp ?? 0) / sessionRated : null;
+
+        recentSessions.push({
+          id: s.id,
+          sequenceName: s.sequence_name,
+          startedAt: s.started_at,
+          totalEdits: s.total_edits,
+          approvalRate: sessionApproval,
+        });
+      }
+    }
+
+    return {
+      totalEdits: total,
+      totalSessions: totalSessions ?? 0,
+      approvalRate,
+      thumbsUp: thumbsUp ?? 0,
+      thumbsDown: thumbsDown ?? 0,
+      boostedCount: boostedCount ?? 0,
+      undoRate,
+      editsByType,
+      recentSessions,
+    };
+  } catch (err) {
+    console.error('[CuttingBoard] Supabase getAggregateStats error:', err);
+    return null;
   }
 }
 

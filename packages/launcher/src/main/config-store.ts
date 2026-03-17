@@ -15,6 +15,7 @@ export interface LauncherConfig {
   supabaseUrl: string;
   supabaseAnonKey: string;
   autoUpdate: boolean;
+  ghToken: string;
 }
 
 const DEFAULTS: LauncherConfig = {
@@ -25,10 +26,11 @@ const DEFAULTS: LauncherConfig = {
   autoLaunchOnLogin: true,
   startMinimized: true,
   anthropicApiKey: '',
-  sourceRepoPath: '/Users/trevor/Desktop/MaydayCreate',
+  sourceRepoPath: '/Users/trevormay/Desktop/MaydayCreate',
   supabaseUrl: '',
   supabaseAnonKey: '',
   autoUpdate: true,
+  ghToken: '',
 };
 
 function getConfigPath(): string {

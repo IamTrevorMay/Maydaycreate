@@ -21,7 +21,10 @@ export function SettingsPage(): React.ReactElement {
   const [cloudSyncStatus, setCloudSyncStatus] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle');
   const [appVersion, setAppVersion] = useState('…');
   const [updateStatus, setUpdateStatus] = useState<'idle' | 'checking' | 'up-to-date' | 'available' | 'error'>('idle');
-  const [updateInfo, setUpdateInfo] = useState<{ commitsBehind: number; currentCommit: string; latestCommit: string } | null>(null);
+  const [updateInfo, setUpdateInfo] = useState<{ updateAvailable: boolean; currentVersion: string; latestVersion: string } | null>(null);
+  const [ghToken, setGhToken] = useState('');
+  const [ghTokenStatus, setGhTokenStatus] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle');
+  const [hasStoredGhToken, setHasStoredGhToken] = useState(false);
 
   useEffect(() => {
     ipc.config.get().then((cfg) => {
@@ -29,6 +32,10 @@ export function SettingsPage(): React.ReactElement {
       if (cfg.anthropicApiKey) {
         setHasStoredKey(true);
         setApiKey('');
+      }
+      if (cfg.ghToken) {
+        setHasStoredGhToken(true);
+        setGhToken('');
       }
     });
     ipc.app.getVersion().then((info) => setAppVersion(info.version));
@@ -40,8 +47,38 @@ export function SettingsPage(): React.ReactElement {
       const result = await ipc.app.checkForUpdates();
       setUpdateInfo(result);
       setUpdateStatus(result.updateAvailable ? 'available' : 'up-to-date');
+      if (result.currentVersion) setAppVersion(result.currentVersion);
     } catch {
       setUpdateStatus('error');
+    }
+  };
+
+  const saveGhToken = async () => {
+    const trimmed = ghToken.trim();
+    if (!trimmed) return;
+    setGhTokenStatus('saving');
+    try {
+      const updated = await ipc.config.setGhToken(trimmed);
+      setConfig(updated);
+      setHasStoredGhToken(true);
+      setGhToken('');
+      setGhTokenStatus('saved');
+      setTimeout(() => setGhTokenStatus('idle'), 2000);
+    } catch {
+      setGhTokenStatus('error');
+      setTimeout(() => setGhTokenStatus('idle'), 5000);
+    }
+  };
+
+  const clearGhToken = async () => {
+    try {
+      const updated = await ipc.config.setGhToken('');
+      setConfig(updated);
+      setHasStoredGhToken(false);
+      setGhToken('');
+      setGhTokenStatus('idle');
+    } catch (err) {
+      console.error('Failed to clear GitHub token:', err);
     }
   };
 
@@ -181,7 +218,7 @@ export function SettingsPage(): React.ReactElement {
                   color: '#999',
                 }}
               >
-                Push Version
+                Push &amp; Publish
               </button>
               <button
                 onClick={checkForUpdates}
@@ -202,12 +239,12 @@ export function SettingsPage(): React.ReactElement {
             </div>
           </div>
           {updateStatus === 'up-to-date' && (
-            <span style={{ fontSize: 11, color: c.status.success }}>Up to date ({updateInfo?.currentCommit})</span>
+            <span style={{ fontSize: 11, color: c.status.success }}>Up to date (v{updateInfo?.currentVersion})</span>
           )}
           {updateStatus === 'available' && updateInfo && (
             <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
               <span style={{ fontSize: 11, color: c.status.warning }}>
-                Update available — {updateInfo.commitsBehind} commit{updateInfo.commitsBehind !== 1 ? 's' : ''} behind ({updateInfo.currentCommit} → {updateInfo.latestCommit})
+                Update available: v{updateInfo.currentVersion} &rarr; v{updateInfo.latestVersion}
               </span>
               <button
                 onClick={() => setShowUpdateWizard(true)}
@@ -415,6 +452,81 @@ export function SettingsPage(): React.ReactElement {
         </div>
       </Section>
 
+      {/* GitHub */}
+      <Section title="GitHub">
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+            <span style={{ fontSize: 12, color: c.text.secondary }}>Personal Access Token</span>
+            {hasStoredGhToken && ghTokenStatus !== 'saved' && (
+              <span style={{ fontSize: 10, color: c.status.success, display: 'flex', alignItems: 'center', gap: 4 }}>
+                <span style={{ width: 6, height: 6, borderRadius: '50%', background: c.status.success, display: 'inline-block' }} />
+                Configured
+              </span>
+            )}
+            {ghTokenStatus === 'saved' && (
+              <span style={{ fontSize: 10, color: c.status.success }}>Token saved successfully</span>
+            )}
+            {ghTokenStatus === 'error' && (
+              <span style={{ fontSize: 10, color: c.status.error }}>Failed to save token</span>
+            )}
+          </div>
+          <div style={{ display: 'flex', gap: 8 }}>
+            <input
+              type="password"
+              value={ghToken}
+              onChange={(e) => { setGhToken(e.target.value); setGhTokenStatus('idle'); }}
+              placeholder={hasStoredGhToken ? 'Enter new token to replace...' : 'ghp_...'}
+              style={{
+                flex: 1,
+                padding: '6px 10px',
+                borderRadius: 4,
+                border: `1px solid ${c.border.default}`,
+                background: c.bg.primary,
+                color: c.text.primary,
+                fontSize: 12,
+                fontFamily: 'monospace',
+                outline: 'none',
+              }}
+            />
+            <button
+              onClick={saveGhToken}
+              disabled={!ghToken.trim() || ghTokenStatus === 'saving'}
+              style={{
+                padding: '6px 14px',
+                borderRadius: 4,
+                border: 'none',
+                fontSize: 11,
+                cursor: ghToken.trim() ? 'pointer' : 'default',
+                background: ghTokenStatus === 'saving' ? '#555' : c.accent.primary,
+                color: '#fff',
+                opacity: ghToken.trim() ? 1 : 0.5,
+              }}
+            >
+              {ghTokenStatus === 'saving' ? 'Saving...' : 'Save'}
+            </button>
+            {hasStoredGhToken && (
+              <button
+                onClick={clearGhToken}
+                style={{
+                  padding: '6px 10px',
+                  borderRadius: 4,
+                  border: `1px solid ${c.border.default}`,
+                  background: 'transparent',
+                  fontSize: 11,
+                  cursor: 'pointer',
+                  color: c.text.secondary,
+                }}
+              >
+                Clear
+              </button>
+            )}
+          </div>
+          <span style={{ fontSize: 10, color: c.text.disabled }}>
+            Required for publishing releases. Needs <span style={{ fontFamily: 'monospace' }}>repo</span> scope. github.com/settings/tokens
+          </span>
+        </div>
+      </Section>
+
       {/* Source Repository */}
       <Section title="Source Repository">
         <Row label="Path" value={config.sourceRepoPath || 'Not configured'} mono />
@@ -436,9 +548,8 @@ export function SettingsPage(): React.ReactElement {
 
       {showUpdateWizard && updateInfo && (
         <UpdateWizard
-          commitsBehind={updateInfo.commitsBehind}
-          currentCommit={updateInfo.currentCommit}
-          latestCommit={updateInfo.latestCommit}
+          currentVersion={updateInfo.currentVersion}
+          latestVersion={updateInfo.latestVersion}
           onDone={() => setShowUpdateWizard(false)}
           onCancel={() => setShowUpdateWizard(false)}
         />

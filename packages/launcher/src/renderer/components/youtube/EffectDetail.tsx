@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { c } from '../../styles.js';
-import type { DetectedEffect } from '@mayday/types';
+import type { DetectedEffect, TrainingStats } from '@mayday/types';
 
 const CONFIDENCE_COLORS: Record<string, string> = {
   high: c.status.success,
@@ -25,9 +25,10 @@ interface EffectDetailProps {
   hasPrev?: boolean;
   hasNext?: boolean;
   effectPosition?: string;
+  trainingStats?: TrainingStats;
 }
 
-export function EffectDetail({ effect, onRate, onSavePreset, onPrev, onNext, hasPrev, hasNext, effectPosition }: EffectDetailProps): React.ReactElement {
+export function EffectDetail({ effect, onRate, onSavePreset, onPrev, onNext, hasPrev, hasNext, effectPosition, trainingStats }: EffectDetailProps): React.ReactElement {
   const [correctionNote, setCorrectionNote] = useState('');
   const [presetName, setPresetName] = useState('');
   const [showPresetForm, setShowPresetForm] = useState(false);
@@ -38,6 +39,7 @@ export function EffectDetail({ effect, onRate, onSavePreset, onPrev, onNext, has
     } else {
       onRate(effect.id, value);
     }
+    onNext?.();
   };
 
   const handleSavePreset = () => {
@@ -55,56 +57,6 @@ export function EffectDetail({ effect, onRate, onSavePreset, onPrev, onNext, has
       border: `1px solid ${c.border.default}`,
       margin: '0 20px 20px',
     }}>
-      {/* Navigation bar */}
-      {(onPrev || onNext) && (
-        <div style={{
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'space-between',
-          marginBottom: 14,
-          paddingBottom: 10,
-          borderBottom: `1px solid ${c.border.default}`,
-        }}>
-          <button
-            onClick={onPrev}
-            disabled={!hasPrev}
-            style={{
-              padding: '4px 12px',
-              background: hasPrev ? c.bg.tertiary : 'transparent',
-              color: hasPrev ? c.text.primary : c.text.disabled,
-              border: `1px solid ${hasPrev ? c.border.default : 'transparent'}`,
-              borderRadius: 4,
-              fontSize: 12,
-              cursor: hasPrev ? 'pointer' : 'default',
-              opacity: hasPrev ? 1 : 0.4,
-            }}
-          >
-            ← Prev
-          </button>
-          {effectPosition && (
-            <span style={{ fontSize: 11, color: c.text.secondary, fontWeight: 600 }}>
-              {effectPosition}
-            </span>
-          )}
-          <button
-            onClick={onNext}
-            disabled={!hasNext}
-            style={{
-              padding: '4px 12px',
-              background: hasNext ? c.bg.tertiary : 'transparent',
-              color: hasNext ? c.text.primary : c.text.disabled,
-              border: `1px solid ${hasNext ? c.border.default : 'transparent'}`,
-              borderRadius: 4,
-              fontSize: 12,
-              cursor: hasNext ? 'pointer' : 'default',
-              opacity: hasNext ? 1 : 0.4,
-            }}
-          >
-            Next →
-          </button>
-        </div>
-      )}
-
       {/* Header */}
       <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 12 }}>
         <span style={{
@@ -353,6 +305,73 @@ export function EffectDetail({ effect, onRate, onSavePreset, onPrev, onNext, has
         >
           Save as Preset
         </button>
+      )}
+
+      {/* Training stats row */}
+      {trainingStats && trainingStats.totalEffects > 0 && (
+        <div style={{
+          display: 'flex',
+          gap: 12,
+          marginTop: 14,
+          paddingTop: 10,
+          borderTop: `1px solid ${c.border.default}`,
+          fontSize: 11,
+          color: c.text.secondary,
+        }}>
+          <span>Rated: {trainingStats.ratedEffects}/{trainingStats.totalEffects} ({trainingStats.totalEffects > 0 ? Math.round((trainingStats.ratedEffects / trainingStats.totalEffects) * 100) : 0}%)</span>
+          <span>Avg: {trainingStats.averageRating.toFixed(1)}</span>
+          <span>Accuracy: {trainingStats.accuracyPercent}%</span>
+        </div>
+      )}
+
+      {/* Navigation bar */}
+      {(onPrev || onNext) && (
+        <div style={{
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'space-between',
+          marginTop: 14,
+          paddingTop: 10,
+          borderTop: `1px solid ${c.border.default}`,
+        }}>
+          <button
+            onClick={onPrev}
+            disabled={!hasPrev}
+            style={{
+              padding: '4px 12px',
+              background: hasPrev ? c.bg.tertiary : 'transparent',
+              color: hasPrev ? c.text.primary : c.text.disabled,
+              border: `1px solid ${hasPrev ? c.border.default : 'transparent'}`,
+              borderRadius: 4,
+              fontSize: 12,
+              cursor: hasPrev ? 'pointer' : 'default',
+              opacity: hasPrev ? 1 : 0.4,
+            }}
+          >
+            ← Prev
+          </button>
+          {effectPosition && (
+            <span style={{ fontSize: 11, color: c.text.secondary, fontWeight: 600 }}>
+              {effectPosition}
+            </span>
+          )}
+          <button
+            onClick={onNext}
+            disabled={!hasNext}
+            style={{
+              padding: '4px 12px',
+              background: hasNext ? c.bg.tertiary : 'transparent',
+              color: hasNext ? c.text.primary : c.text.disabled,
+              border: `1px solid ${hasNext ? c.border.default : 'transparent'}`,
+              borderRadius: 4,
+              fontSize: 12,
+              cursor: hasNext ? 'pointer' : 'default',
+              opacity: hasNext ? 1 : 0.4,
+            }}
+          >
+            Next →
+          </button>
+        </div>
       )}
     </div>
   );

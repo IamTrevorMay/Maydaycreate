@@ -25,6 +25,7 @@ export function PushWizard({ onDone, onCancel }: Props): React.ReactElement {
   const [log, setLog] = useState<string[]>([]);
   const [errorMsg, setErrorMsg] = useState('');
   const [commitHash, setCommitHash] = useState('');
+  const [publishedVersion, setPublishedVersion] = useState('');
   const logRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -37,9 +38,11 @@ export function PushWizard({ onDone, onCancel }: Props): React.ReactElement {
         setErrorMsg(p.error);
         setStep('error');
       } else if (p.done) {
-        // Extract commit hash from completion message
-        const match = p.message.match(/Commit: (\w+)/);
-        if (match) setCommitHash(match[1]);
+        // Extract version and commit from completion message
+        const versionMatch = p.message.match(/Published v([\d.]+)/);
+        if (versionMatch) setPublishedVersion(versionMatch[1]);
+        const commitMatch = p.message.match(/Commit: (\w+)/);
+        if (commitMatch) setCommitHash(commitMatch[1]);
         setPct(100);
         setStep('done');
       }
@@ -79,16 +82,16 @@ export function PushWizard({ onDone, onCancel }: Props): React.ReactElement {
   return (
     <div style={{ position: 'fixed', inset: 0, background: '#0009', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 100 }}>
       <div style={{ background: c.bg.elevated, border: `1px solid ${c.border.default}`, borderRadius: 8, padding: 28, width: 520, display: 'flex', flexDirection: 'column', gap: 16 }}>
-        <h3 style={{ color: c.text.primary, fontSize: 15, fontWeight: 600 }}>Push Version</h3>
+        <h3 style={{ color: c.text.primary, fontSize: 15, fontWeight: 600 }}>Push &amp; Publish</h3>
 
         {step === 'confirm' && (
           <>
             <p style={{ color: c.text.secondary, fontSize: 12 }}>
-              This will commit all changes and push to origin main. Other machines can then pull this version.
+              Commits changes, bumps version, pushes to GitHub, builds and publishes a release. May take several minutes.
             </p>
             <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
               <button onClick={onCancel} style={secondaryBtn}>Cancel</button>
-              <button onClick={startPush} style={primaryBtn}>Push Version</button>
+              <button onClick={startPush} style={primaryBtn}>Push &amp; Publish</button>
             </div>
           </>
         )}
@@ -107,10 +110,11 @@ export function PushWizard({ onDone, onCancel }: Props): React.ReactElement {
 
         {step === 'done' && (
           <>
-            <p style={{ color: c.status.success, fontSize: 13 }}>Push complete!</p>
-            {commitHash && (
+            <p style={{ color: c.status.success, fontSize: 13 }}>Published!</p>
+            {(commitHash || publishedVersion) && (
               <p style={{ color: c.text.secondary, fontSize: 12 }}>
-                Commit: <span style={{ fontFamily: 'monospace' }}>{commitHash}</span>
+                {publishedVersion && <>Published v{publishedVersion}! </>}
+                {commitHash && <>Commit: <span style={{ fontFamily: 'monospace' }}>{commitHash}</span></>}
               </p>
             )}
             <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>

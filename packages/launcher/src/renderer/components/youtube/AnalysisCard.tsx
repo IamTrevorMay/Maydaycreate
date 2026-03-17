@@ -1,6 +1,6 @@
 import React from 'react';
 import { c } from '../../styles.js';
-import type { VideoAnalysisSummary, AnalysisStatus } from '@mayday/types';
+import type { VideoAnalysisSummary, AnalysisStatus, AnalysisProgress } from '@mayday/types';
 
 const STATUS_COLORS: Partial<Record<AnalysisStatus, string>> = {
   queued: c.text.secondary,
@@ -16,9 +16,10 @@ interface AnalysisCardProps {
   analysis: VideoAnalysisSummary;
   onClick: () => void;
   onDelete: () => void;
+  progress?: AnalysisProgress;
 }
 
-export function AnalysisCard({ analysis, onClick, onDelete }: AnalysisCardProps): React.ReactElement {
+export function AnalysisCard({ analysis, onClick, onDelete, progress }: AnalysisCardProps): React.ReactElement {
   const formatDuration = (seconds: number): string => {
     const m = Math.floor(seconds / 60);
     const s = Math.floor(seconds % 60);
@@ -100,7 +101,11 @@ export function AnalysisCard({ analysis, onClick, onDelete }: AnalysisCardProps)
               display: 'inline-block',
             }} />
             <span style={{ fontSize: 10, color: c.text.secondary }}>
-              {analysis.status === 'complete' ? `${analysis.effectCount} effects` : analysis.status}
+              {analysis.status === 'complete'
+                ? `${analysis.effectCount} effects`
+                : progress
+                  ? progress.phase
+                  : analysis.status}
             </span>
           </div>
           <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
@@ -124,6 +129,18 @@ export function AnalysisCard({ analysis, onClick, onDelete }: AnalysisCardProps)
           </div>
         </div>
       </div>
+
+      {/* Progress bar for active analyses */}
+      {progress && ['downloading', 'extracting', 'analyzing'].includes(analysis.status) && (
+        <div style={{ height: 3, background: c.bg.tertiary }}>
+          <div style={{
+            height: '100%',
+            width: `${Math.min(progress.percent, 100)}%`,
+            background: c.accent.primary,
+            transition: 'width 0.3s',
+          }} />
+        </div>
+      )}
     </div>
   );
 }
