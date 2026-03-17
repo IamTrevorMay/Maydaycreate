@@ -91,6 +91,7 @@ export class YouTubeSyncService {
           rating: (e.rating as number) ?? null,
           correction_note: (e.correction_note as string) || null,
           source_identification: (e.source_identification as string) || null,
+          source: (e.source as string) || 'ai',
         }));
 
         const { error } = await this.client

@@ -1,8 +1,0 @@
-{
-  "extends": "../../tsconfig.base.json",
-  "compilerOptions": {
-    "outDir": "dist",
-    "rootDir": "."
-  },
-  "include": ["src", "../cutting-board/src/pipeline.ts", "../cutting-board/src/example-bank.ts", "../cutting-board/src/db.ts", "../cutting-board/src/types.ts"]
-}

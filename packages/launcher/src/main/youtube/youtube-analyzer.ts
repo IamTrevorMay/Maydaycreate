@@ -116,10 +116,12 @@ export class YouTubeAnalyzer {
   // ── Rating & Training ────────────────────────────────────────────────
 
   rateEffect(effectId: string, rating: number, correctionNote?: string): void {
-    this.db.rateEffect(effectId, rating, correctionNote);
+    // Clamp to 1-5 range
+    const clamped = Math.max(1, Math.min(5, Math.round(rating)));
+    this.db.rateEffect(effectId, clamped, correctionNote);
 
-    // If thumbs down with correction, save as training data
-    if (rating === -1 && correctionNote) {
+    // If low rating (1-2) with correction, save as training data
+    if (clamped <= 2 && correctionNote) {
       const effect = this.db.getEffect(effectId);
       if (effect) {
         this.db.insertCorrection({

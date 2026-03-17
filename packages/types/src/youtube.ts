@@ -148,6 +148,8 @@ export interface TrainingStats {
   thumbsDown: number;
   corrections: number;
   accuracyPercent: number;
+  ratingDistribution: [number, number, number, number, number];
+  averageRating: number;
 }
 
 export interface BatchQueueItem {

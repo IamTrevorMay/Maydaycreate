@@ -90,16 +90,17 @@ export function AnalysisProgress({ progress, onCancel, onPause, onResume }: Anal
             <button
               onClick={onPause}
               style={{
-                padding: '4px 12px',
-                background: 'transparent',
-                border: `1px solid ${c.status.warning}`,
-                color: c.status.warning,
+                padding: '6px 18px',
+                background: '#fbbf24',
+                border: 'none',
+                color: '#000',
                 borderRadius: 4,
-                fontSize: 11,
+                fontSize: 12,
+                fontWeight: 700,
                 cursor: 'pointer',
               }}
             >
-              Pause
+              PAUSE
             </button>
           )}
           {isPaused && onResume && (

@@ -8,20 +8,36 @@ const CONFIDENCE_COLORS: Record<string, string> = {
   low: c.status.error,
 };
 
+const RATING_BUTTONS: { value: number; color: string }[] = [
+  { value: 1, color: '#ef4444' },
+  { value: 2, color: '#f97316' },
+  { value: 3, color: '#eab308' },
+  { value: 4, color: '#84cc16' },
+  { value: 5, color: '#22c55e' },
+];
+
 interface EffectDetailProps {
   effect: DetectedEffect;
   onRate: (effectId: string, rating: number, note?: string) => void;
   onSavePreset: (effectId: string, name: string, tags?: string[]) => void;
+  onPrev?: () => void;
+  onNext?: () => void;
+  hasPrev?: boolean;
+  hasNext?: boolean;
+  effectPosition?: string;
 }
 
-export function EffectDetail({ effect, onRate, onSavePreset }: EffectDetailProps): React.ReactElement {
+export function EffectDetail({ effect, onRate, onSavePreset, onPrev, onNext, hasPrev, hasNext, effectPosition }: EffectDetailProps): React.ReactElement {
   const [correctionNote, setCorrectionNote] = useState('');
   const [presetName, setPresetName] = useState('');
   const [showPresetForm, setShowPresetForm] = useState(false);
 
-  const handleThumbsDown = () => {
-    onRate(effect.id, -1, correctionNote || undefined);
-    setCorrectionNote('');
+  const handleRate = (value: number) => {
+    if (value <= 2) {
+      onRate(effect.id, value, correctionNote || undefined);
+    } else {
+      onRate(effect.id, value);
+    }
   };
 
   const handleSavePreset = () => {
@@ -39,6 +55,56 @@ export function EffectDetail({ effect, onRate, onSavePreset }: EffectDetailProps
       border: `1px solid ${c.border.default}`,
       margin: '0 20px 20px',
     }}>
+      {/* Navigation bar */}
+      {(onPrev || onNext) && (
+        <div style={{
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'space-between',
+          marginBottom: 14,
+          paddingBottom: 10,
+          borderBottom: `1px solid ${c.border.default}`,
+        }}>
+          <button
+            onClick={onPrev}
+            disabled={!hasPrev}
+            style={{
+              padding: '4px 12px',
+              background: hasPrev ? c.bg.tertiary : 'transparent',
+              color: hasPrev ? c.text.primary : c.text.disabled,
+              border: `1px solid ${hasPrev ? c.border.default : 'transparent'}`,
+              borderRadius: 4,
+              fontSize: 12,
+              cursor: hasPrev ? 'pointer' : 'default',
+              opacity: hasPrev ? 1 : 0.4,
+            }}
+          >
+            ← Prev
+          </button>
+          {effectPosition && (
+            <span style={{ fontSize: 11, color: c.text.secondary, fontWeight: 600 }}>
+              {effectPosition}
+            </span>
+          )}
+          <button
+            onClick={onNext}
+            disabled={!hasNext}
+            style={{
+              padding: '4px 12px',
+              background: hasNext ? c.bg.tertiary : 'transparent',
+              color: hasNext ? c.text.primary : c.text.disabled,
+              border: `1px solid ${hasNext ? c.border.default : 'transparent'}`,
+              borderRadius: 4,
+              fontSize: 12,
+              cursor: hasNext ? 'pointer' : 'default',
+              opacity: hasNext ? 1 : 0.4,
+            }}
+          >
+            Next →
+          </button>
+        </div>
+      )}
+
       {/* Header */}
       <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 12 }}>
         <span style={{
@@ -153,59 +219,68 @@ export function EffectDetail({ effect, onRate, onSavePreset }: EffectDetailProps
         </div>
       )}
 
-      {/* Rating */}
-      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 12 }}>
-        <span style={{ fontSize: 11, color: c.text.secondary }}>Accurate?</span>
-        <button
-          onClick={() => onRate(effect.id, 1)}
-          style={{
-            padding: '4px 12px',
-            background: effect.rating === 1 ? c.status.success : c.bg.tertiary,
-            color: effect.rating === 1 ? '#000' : c.text.primary,
-            border: 'none',
-            borderRadius: 4,
-            fontSize: 14,
-            cursor: 'pointer',
-          }}
-        >
-          +
-        </button>
-        <button
-          onClick={() => effect.rating !== -1 && handleThumbsDown()}
-          style={{
-            padding: '4px 12px',
-            background: effect.rating === -1 ? c.status.error : c.bg.tertiary,
-            color: effect.rating === -1 ? '#fff' : c.text.primary,
-            border: 'none',
-            borderRadius: 4,
-            fontSize: 14,
-            cursor: 'pointer',
-          }}
-        >
-          -
-        </button>
+      {/* 1-5 Rating */}
+      <div style={{ marginBottom: 12 }}>
+        <div style={{ fontSize: 11, color: c.text.secondary, marginBottom: 8 }}>
+          Rate accuracy (1-5, or press keys 1-5)
+        </div>
+        <div style={{ display: 'flex', gap: 8 }}>
+          {RATING_BUTTONS.map(({ value, color }) => {
+            const isSelected = effect.rating === value;
+            const hasRating = effect.rating != null;
+            return (
+              <button
+                key={value}
+                onClick={() => handleRate(value)}
+                style={{
+                  width: 48,
+                  height: 48,
+                  borderRadius: 8,
+                  border: 'none',
+                  background: isSelected ? color : c.bg.tertiary,
+                  color: isSelected ? '#fff' : c.text.primary,
+                  fontSize: 18,
+                  fontWeight: 700,
+                  cursor: 'pointer',
+                  opacity: hasRating && !isSelected ? 0.4 : 1,
+                  transition: 'all 0.15s',
+                }}
+              >
+                {value}
+              </button>
+            );
+          })}
+        </div>
+      </div>
 
-        {/* Correction input for thumbs down */}
-        {effect.rating !== 1 && (
+      {/* Correction note for low ratings */}
+      {(effect.rating == null || effect.rating <= 2) && (
+        <div style={{ marginBottom: 12 }}>
           <input
             type="text"
             value={correctionNote}
             onChange={(e) => setCorrectionNote(e.target.value)}
-            onKeyDown={(e) => e.key === 'Enter' && handleThumbsDown()}
-            placeholder="What was wrong? (optional)"
+            onKeyDown={(e) => {
+              if (e.key === 'Enter' && correctionNote) {
+                handleRate(effect.rating || 2);
+              }
+            }}
+            placeholder="What was wrong? (optional, for ratings 1-2)"
+            className="effect-detail-correction"
             style={{
-              flex: 1,
-              padding: '4px 8px',
+              width: '100%',
+              padding: '6px 10px',
               background: c.bg.primary,
               border: `1px solid ${c.border.default}`,
               borderRadius: 4,
               color: c.text.primary,
               fontSize: 11,
               outline: 'none',
+              boxSizing: 'border-box',
             }}
           />
-        )}
-      </div>
+        </div>
+      )}
 
       {/* Save as Preset */}
       {effect.savedPresetId ? (

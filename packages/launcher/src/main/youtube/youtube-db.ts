@@ -127,6 +127,15 @@ export class YouTubeDB {
       this.db.exec(`ALTER TABLE analyses ADD COLUMN pause_frame_index INTEGER`);
     }
 
+    // Migration: convert old -1/1 ratings to 1-5 scale
+    const hasLegacyRatings = (this.db.prepare('SELECT COUNT(*) as c FROM effects WHERE rating = -1').get() as { c: number }).c > 0;
+    if (hasLegacyRatings) {
+      this.db.exec(`
+        UPDATE effects SET rating = 2 WHERE rating = -1;
+        UPDATE effects SET rating = 4 WHERE rating = 1;
+      `);
+    }
+
     // Migration: add source column to effects + no_effect_pairs table
     const effectCols = this.db.prepare("PRAGMA table_info(effects)").all() as Array<{ name: string }>;
     if (!effectCols.some(c => c.name === 'source')) {
@@ -327,9 +336,21 @@ export class YouTubeDB {
   getTrainingStats(): TrainingStats {
     const total = (this.db.prepare('SELECT COUNT(*) as c FROM effects').get() as { c: number }).c;
     const rated = (this.db.prepare('SELECT COUNT(*) as c FROM effects WHERE rating IS NOT NULL').get() as { c: number }).c;
-    const up = (this.db.prepare('SELECT COUNT(*) as c FROM effects WHERE rating = 1').get() as { c: number }).c;
-    const down = (this.db.prepare('SELECT COUNT(*) as c FROM effects WHERE rating = -1').get() as { c: number }).c;
     const corrections = (this.db.prepare('SELECT COUNT(*) as c FROM corrections').get() as { c: number }).c;
+
+    // Count per rating level (1-5)
+    const dist: [number, number, number, number, number] = [0, 0, 0, 0, 0];
+    for (let i = 1; i <= 5; i++) {
+      dist[i - 1] = (this.db.prepare('SELECT COUNT(*) as c FROM effects WHERE rating = ?').get(i) as { c: number }).c;
+    }
+
+    // Derive thumbsUp (4-5) and thumbsDown (1-2) for backward compat
+    const up = dist[3] + dist[4];
+    const down = dist[0] + dist[1];
+
+    const sumRatings = dist.reduce((sum, count, idx) => sum + count * (idx + 1), 0);
+    const averageRating = rated > 0 ? Math.round((sumRatings / rated) * 10) / 10 : 0;
+
     return {
       totalEffects: total,
       ratedEffects: rated,
@@ -337,6 +358,8 @@ export class YouTubeDB {
       thumbsDown: down,
       corrections,
       accuracyPercent: rated > 0 ? Math.round((up / rated) * 100) : 0,
+      ratingDistribution: dist,
+      averageRating,
     };
   }
 

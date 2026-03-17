@@ -14,6 +14,7 @@ export interface LauncherConfig {
   sourceRepoPath: string;
   supabaseUrl: string;
   supabaseAnonKey: string;
+  autoUpdate: boolean;
 }
 
 const DEFAULTS: LauncherConfig = {
@@ -27,6 +28,7 @@ const DEFAULTS: LauncherConfig = {
   sourceRepoPath: '/Users/trevor/Desktop/MaydayCreate',
   supabaseUrl: '',
   supabaseAnonKey: '',
+  autoUpdate: true,
 };
 
 function getConfigPath(): string {

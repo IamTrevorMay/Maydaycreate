@@ -18,6 +18,7 @@ import { SyncEngine } from '@mayday/sync-engine';
 import type { SyncSource } from '@mayday/sync-engine';
 import { YouTubeAnalyzer } from './youtube/youtube-analyzer.js';
 import { YouTubeSyncService } from './youtube/youtube-sync.js';
+import { silentAutoUpdate } from './auto-updater.js';
 
 // Augment PATH for Dock-launched apps (they don't inherit shell PATH)
 if (app.isPackaged) {
@@ -188,6 +189,11 @@ app.whenReady().then(async () => {
     syncEngine.runSync().catch(err => {
       console.error('[Launcher] Initial sync failed:', err);
     });
+  }
+
+  // Silent auto-update on launch (packaged app only)
+  if (app.isPackaged && config.autoUpdate) {
+    silentAutoUpdate(config.sourceRepoPath, mainWindow);
   }
 
   app.on('activate', () => {

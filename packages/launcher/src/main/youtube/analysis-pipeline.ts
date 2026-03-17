@@ -22,6 +22,7 @@ export class AnalysisPipeline {
   private shortcutCache: ShortcutCache;
   private abortControllers = new Map<string, AbortController>();
   private pauseFlags = new Map<string, boolean>();
+  private progressCallbacks = new Map<string, ProgressCallback>();
 
   constructor(db: YouTubeDB, dataDir: string) {
     this.db = db;
@@ -44,6 +45,7 @@ export class AnalysisPipeline {
   ): Promise<void> {
     const ac = new AbortController();
     this.abortControllers.set(analysisId, ac);
+    this.progressCallbacks.set(analysisId, onProgress);
     const startTime = Date.now();
 
     const dataDir = path.join(app.getPath('userData'), 'youtube-analysis', analysisId);
@@ -69,6 +71,9 @@ export class AnalysisPipeline {
 
       onProgress({ analysisId, status: 'downloading', phase: 'Downloading video', percent: 100, detail: 'Download complete' });
 
+      // Check pause between phases
+      if (this.checkPause(analysisId, 0, onProgress)) return;
+
       // Phase 2: Extract frames
       this.checkAbort(ac);
       this.db.updateAnalysisStatus(analysisId, 'extracting');
@@ -82,6 +87,9 @@ export class AnalysisPipeline {
       this.db.insertFrames(frames);
       this.db.setAnalysisFramesDir(analysisId, framesDir, frames.length);
       onProgress({ analysisId, status: 'extracting', phase: 'Extracting frames', percent: 100, detail: `Extracted ${frames.length} frames` });
+
+      // Check pause between phases
+      if (this.checkPause(analysisId, 0, onProgress)) return;
 
       // Phase 2.5: Compute visual diffs
       this.checkAbort(ac);
@@ -273,6 +281,7 @@ export class AnalysisPipeline {
       }
     } finally {
       this.abortControllers.delete(analysisId);
+      this.progressCallbacks.delete(analysisId);
     }
   }
 
@@ -284,6 +293,11 @@ export class AnalysisPipeline {
   pause(analysisId: string): void {
     if (this.abortControllers.has(analysisId)) {
       this.pauseFlags.set(analysisId, true);
+      // Emit immediate "Pausing..." feedback so the UI responds instantly
+      const cb = this.progressCallbacks.get(analysisId);
+      if (cb) {
+        cb({ analysisId, status: 'analyzing', phase: 'Pausing...', percent: 0, detail: 'Pausing after current operation...' });
+      }
     }
   }
 
@@ -300,6 +314,7 @@ export class AnalysisPipeline {
 
     const ac = new AbortController();
     this.abortControllers.set(analysisId, ac);
+    this.progressCallbacks.set(analysisId, onProgress);
     const startTime = Date.now();
 
     try {
@@ -499,6 +514,7 @@ export class AnalysisPipeline {
       }
     } finally {
       this.abortControllers.delete(analysisId);
+      this.progressCallbacks.delete(analysisId);
     }
   }
 
@@ -512,6 +528,19 @@ export class AnalysisPipeline {
 
   private checkAbort(ac: AbortController): void {
     if (ac.signal.aborted) throw new Error('CANCELLED');
+  }
+
+  /** Returns true if paused (caller should return early) */
+  private checkPause(analysisId: string, frameIndex: number, onProgress: ProgressCallback): boolean {
+    if (this.pauseFlags.get(analysisId)) {
+      this.pauseFlags.delete(analysisId);
+      this.db.pauseAnalysis(analysisId, frameIndex);
+      onProgress({ analysisId, status: 'paused', phase: 'Paused', percent: 0, detail: `Paused at frame ${frameIndex}` });
+      this.abortControllers.delete(analysisId);
+      this.progressCallbacks.delete(analysisId);
+      return true;
+    }
+    return false;
   }
 
   private pickSampleFrames(frames: ExtractedFrame[], count: number): ExtractedFrame[] {

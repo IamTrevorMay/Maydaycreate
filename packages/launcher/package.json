@@ -75,7 +75,11 @@
         }
       ],
       "icon": "resources/icon.icns",
-      "identity": null
+      "identity": "Developer ID Application",
+      "hardenedRuntime": true,
+      "entitlements": "build/entitlements.mac.plist",
+      "entitlementsInherit": "build/entitlements.mac.plist",
+      "notarize": true
     },
     "dmg": {
       "title": "Mayday Create",

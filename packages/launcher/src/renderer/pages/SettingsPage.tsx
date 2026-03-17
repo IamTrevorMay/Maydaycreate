@@ -146,6 +146,27 @@ export function SettingsPage(): React.ReactElement {
       <Section title="Updates">
         <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+            <span style={{ fontSize: 12, color: c.text.primary }}>Auto-update on launch</span>
+            <button
+              onClick={async () => {
+                if (!config) return;
+                const updated = await ipc.config.setAutoUpdate(!config.autoUpdate);
+                setConfig(updated);
+              }}
+              style={{
+                padding: '3px 10px',
+                borderRadius: 4,
+                border: 'none',
+                fontSize: 11,
+                cursor: 'pointer',
+                background: config.autoUpdate ? '#2680eb' : '#383838',
+                color: config.autoUpdate ? '#fff' : '#999',
+              }}
+            >
+              {config.autoUpdate ? 'Enabled' : 'Disabled'}
+            </button>
+          </div>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
             <span style={{ fontSize: 12, color: c.text.primary }}>Current version: {appVersion}</span>
             <div style={{ display: 'flex', gap: 6 }}>
               <button

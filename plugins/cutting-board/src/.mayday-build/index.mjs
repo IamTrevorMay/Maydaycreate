@@ -258,6 +258,14 @@ var CuttingBoardDB = class {
         total_edits INTEGER DEFAULT 0
       );
 
+      CREATE TABLE IF NOT EXISTS model_training_runs (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        trained_at INTEGER NOT NULL,
+        training_size INTEGER NOT NULL,
+        accuracy REAL NOT NULL,
+        version INTEGER NOT NULL
+      );
+
       CREATE TABLE IF NOT EXISTS cut_records (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         session_id INTEGER NOT NULL REFERENCES sessions(id),
@@ -286,6 +294,13 @@ var CuttingBoardDB = class {
         UPDATE cut_records SET rating = 0 WHERE rating IS NOT NULL AND rating <= 2;
         UPDATE cut_records SET rating = 1 WHERE rating IS NOT NULL AND rating >= 3;
       `);
+    }
+    if (!cols.some((c) => c.name === "synced_at")) {
+      this.db.exec(`ALTER TABLE cut_records ADD COLUMN synced_at INTEGER;`);
+    }
+    const sessionCols = this.db.prepare("PRAGMA table_info(sessions)").all();
+    if (!sessionCols.some((c) => c.name === "synced_at")) {
+      this.db.exec(`ALTER TABLE sessions ADD COLUMN synced_at INTEGER;`);
     }
   }
   createSession(sequenceId, sequenceName) {
@@ -485,6 +500,36 @@ var CuttingBoardDB = class {
       return { ...r, quality, weight };
     });
   }
+  getUnsyncedSessions() {
+    return this.db.prepare(
+      "SELECT * FROM sessions WHERE synced_at IS NULL"
+    ).all();
+  }
+  getUnsyncedRecords(limit = 500) {
+    return this.db.prepare(
+      "SELECT cr.*, s.sequence_id, s.sequence_name FROM cut_records cr JOIN sessions s ON cr.session_id = s.id WHERE cr.synced_at IS NULL LIMIT ?"
+    ).all(limit);
+  }
+  markSynced(table, ids) {
+    if (ids.length === 0) return;
+    const now = Date.now();
+    const placeholders = ids.map(() => "?").join(",");
+    this.db.prepare(
+      `UPDATE ${table} SET synced_at = ? WHERE id IN (${placeholders})`
+    ).run(now, ...ids);
+  }
+  recordTrainingRun(trainingSize, accuracy, version) {
+    const stmt = this.db.prepare(
+      "INSERT INTO model_training_runs (trained_at, training_size, accuracy, version) VALUES (?, ?, ?, ?)"
+    );
+    const result = stmt.run(Date.now(), trainingSize, accuracy, version);
+    return result.lastInsertRowid;
+  }
+  getLatestTrainingRun() {
+    return this.db.prepare(
+      "SELECT id, trained_at as trainedAt, training_size as trainingSize, accuracy, version FROM model_training_runs ORDER BY trained_at DESC LIMIT 1"
+    ).get() ?? null;
+  }
   close() {
     this.db.close();
   }
@@ -629,6 +674,311 @@ var ExampleBank = class {
   }
 };
 
+// ../../plugins/cutting-board/src/model.ts
+import brain from "brain.js";
+
+// ../../plugins/cutting-board/src/autocut-types.ts
+var EDIT_TYPES = ["cut", "trim-head", "trim-tail", "delete", "move", "add"];
+
+// ../../plugins/cutting-board/src/model.ts
+import fs2 from "fs";
+import path2 from "path";
+var MAX_DURATION = 60;
+var MAX_GAP = 10;
+var MAX_TRACK_INDEX = 10;
+var MAX_TIME_SINCE_EDIT = 6e4;
+function featureToVector(example, recentEdits2) {
+  const ctx = example.context;
+  const trackType = ctx.trackType === "audio" ? 1 : 0;
+  const trackIndex = Math.min(ctx.trackIndex / MAX_TRACK_INDEX, 1);
+  const clipDuration = ctx.beforeDuration != null ? Math.min(ctx.beforeDuration / MAX_DURATION, 1) : 0.5;
+  const clipPosition = Math.min(ctx.editPointTime / 600, 1);
+  const playheadInClip = example.action.splitRatio ?? 0.5;
+  const timeSinceLastEdit = recentEdits2.length > 0 ? Math.min((example.timestamp - recentEdits2[recentEdits2.length - 1].timestamp) / MAX_TIME_SINCE_EDIT, 1) : 1;
+  const hasNeighborBefore = ctx.neighborBefore ? 1 : 0;
+  const hasNeighborAfter = ctx.neighborAfter ? 1 : 0;
+  const gapBefore = ctx.neighborBefore ? Math.min(Math.max(0, ctx.editPointTime - ctx.neighborBefore.end) / MAX_GAP, 1) : 0;
+  const gapAfter = ctx.neighborAfter ? Math.min(Math.max(0, ctx.neighborAfter.start - ctx.editPointTime) / MAX_GAP, 1) : 0;
+  const last10 = recentEdits2.slice(-10);
+  const total = Math.max(last10.length, 1);
+  const recentCutFrac = last10.filter((e) => e.editType === "cut").length / total;
+  const recentTrimHeadFrac = last10.filter((e) => e.editType === "trim-head").length / total;
+  const recentTrimTailFrac = last10.filter((e) => e.editType === "trim-tail").length / total;
+  const recentDeleteFrac = last10.filter((e) => e.editType === "delete").length / total;
+  const ratedEdits = last10.filter((e) => e.quality !== "bad");
+  const recentApprovalRate = last10.length > 0 ? ratedEdits.length / last10.length : 0.5;
+  return [
+    trackType,
+    trackIndex,
+    clipDuration,
+    clipPosition,
+    playheadInClip,
+    timeSinceLastEdit,
+    hasNeighborBefore,
+    hasNeighborAfter,
+    gapBefore,
+    gapAfter,
+    recentCutFrac,
+    recentTrimHeadFrac,
+    recentTrimTailFrac,
+    recentDeleteFrac,
+    recentApprovalRate
+  ];
+}
+function editTypeToOutput(editType) {
+  const output = {};
+  for (const t of EDIT_TYPES) {
+    output[t] = t === editType ? 1 : 0;
+  }
+  return output;
+}
+function trainClassifier(examples) {
+  const net = new brain.NeuralNetwork({
+    hiddenLayers: [32, 16],
+    activation: "sigmoid"
+  });
+  const trainingData = [];
+  for (let i = 0; i < examples.length; i++) {
+    const ex = examples[i];
+    if (ex.quality === "bad") continue;
+    const recentEdits2 = examples.slice(0, i);
+    const input = featureToVector(ex, recentEdits2);
+    const output = editTypeToOutput(ex.editType);
+    const copies = ex.quality === "boosted" ? 3 : 1;
+    for (let c = 0; c < copies; c++) {
+      trainingData.push({ input, output });
+    }
+  }
+  net.train(trainingData, {
+    iterations: 2e3,
+    errorThresh: 0.01,
+    log: false
+  });
+  let correct = 0;
+  for (const item of trainingData) {
+    const prediction = net.run(item.input);
+    const predicted = Object.entries(prediction).sort((a, b) => b[1] - a[1])[0][0];
+    const actual = Object.entries(item.output).find(([, v]) => v === 1)?.[0];
+    if (predicted === actual) correct++;
+  }
+  const accuracy = trainingData.length > 0 ? correct / trainingData.length : 0;
+  return { model: net.toJSON(), accuracy };
+}
+function trainRegressor(editType, examples) {
+  const filtered = examples.filter((e) => e.editType === editType && e.quality !== "bad");
+  if (filtered.length < 5) return null;
+  const net = new brain.NeuralNetwork({
+    hiddenLayers: [16, 8],
+    activation: "sigmoid"
+  });
+  const trainingData = [];
+  for (const ex of filtered) {
+    const idx = examples.indexOf(ex);
+    const recentEdits2 = examples.slice(0, idx);
+    const input = featureToVector(ex, recentEdits2);
+    const output = getParameterOutput(ex);
+    if (!output) continue;
+    const copies = ex.quality === "boosted" ? 3 : 1;
+    for (let c = 0; c < copies; c++) {
+      trainingData.push({ input, output });
+    }
+  }
+  if (trainingData.length < 3) return null;
+  net.train(trainingData, {
+    iterations: 1e3,
+    errorThresh: 0.02,
+    log: false
+  });
+  return net.toJSON();
+}
+function getParameterOutput(example) {
+  switch (example.editType) {
+    case "cut":
+      return [example.action.splitRatio ?? 0.5];
+    case "trim-head":
+    case "trim-tail": {
+      const amount = Math.abs(example.action.deltaDuration ?? 0);
+      return [Math.min(amount / MAX_DURATION, 1)];
+    }
+    case "delete":
+      return [1];
+    case "move": {
+      const offset = Math.abs(example.action.deltaStart ?? 0);
+      return [Math.min(offset / MAX_DURATION, 1)];
+    }
+    case "add":
+      return [0.5];
+    default:
+      return null;
+  }
+}
+function instantiateNet(json) {
+  const net = new brain.NeuralNetwork();
+  net.fromJSON(json);
+  return net;
+}
+function saveModel(model, dataDir) {
+  const filePath = path2.join(dataDir, "autocut-model.json");
+  fs2.writeFileSync(filePath, JSON.stringify(model));
+}
+function loadModel(dataDir) {
+  const filePath = path2.join(dataDir, "autocut-model.json");
+  if (!fs2.existsSync(filePath)) return null;
+  try {
+    return JSON.parse(fs2.readFileSync(filePath, "utf-8"));
+  } catch {
+    return null;
+  }
+}
+
+// ../../plugins/cutting-board/src/inference.ts
+var MAX_DURATION2 = 60;
+var MAX_GAP2 = 10;
+var MAX_TRACK_INDEX2 = 10;
+function findTargetClip(sequence, playheadPosition) {
+  for (const trackType of ["video", "audio"]) {
+    const tracks = trackType === "video" ? sequence.videoTracks : sequence.audioTracks;
+    for (const track of tracks) {
+      for (let i = 0; i < track.clips.length; i++) {
+        const clip = track.clips[i];
+        if (playheadPosition >= clip.start && playheadPosition <= clip.end) {
+          return {
+            clip,
+            trackIndex: track.index,
+            trackType,
+            clipIndex: i,
+            neighborBefore: i > 0 ? track.clips[i - 1] : null,
+            neighborAfter: i < track.clips.length - 1 ? track.clips[i + 1] : null
+          };
+        }
+      }
+    }
+  }
+  let nearest = null;
+  for (const trackType of ["video", "audio"]) {
+    const tracks = trackType === "video" ? sequence.videoTracks : sequence.audioTracks;
+    for (const track of tracks) {
+      for (let i = 0; i < track.clips.length; i++) {
+        const clip = track.clips[i];
+        const dist = Math.min(
+          Math.abs(clip.start - playheadPosition),
+          Math.abs(clip.end - playheadPosition)
+        );
+        if (!nearest || dist < nearest.dist) {
+          nearest = {
+            clip,
+            dist,
+            trackIndex: track.index,
+            trackType,
+            clipIndex: i,
+            neighborBefore: i > 0 ? track.clips[i - 1] : null,
+            neighborAfter: i < track.clips.length - 1 ? track.clips[i + 1] : null
+          };
+        }
+      }
+    }
+  }
+  if (nearest && nearest.dist < 5) {
+    const { dist, ...result } = nearest;
+    return result;
+  }
+  return null;
+}
+function buildInferenceInput(clip, playheadPosition, recentEdits2, neighborBefore, neighborAfter) {
+  const trackType = clip.trackType === "audio" ? 1 : 0;
+  const trackIndex = Math.min(clip.trackIndex / MAX_TRACK_INDEX2, 1);
+  const clipDuration = Math.min(clip.duration / MAX_DURATION2, 1);
+  const clipPosition = Math.min(clip.start / 600, 1);
+  const playheadInClip = clip.duration > 0 ? Math.max(0, Math.min(1, (playheadPosition - clip.start) / clip.duration)) : 0.5;
+  const now = Date.now();
+  const lastEditTime = recentEdits2.length > 0 ? recentEdits2[recentEdits2.length - 1].timestamp : 0;
+  const timeSinceLastEdit = lastEditTime > 0 ? Math.min((now - lastEditTime) / 6e4, 1) : 1;
+  const hasNeighborBefore = neighborBefore ? 1 : 0;
+  const hasNeighborAfter = neighborAfter ? 1 : 0;
+  const gapBefore = neighborBefore ? Math.min(Math.max(0, clip.start - neighborBefore.end) / MAX_GAP2, 1) : 0;
+  const gapAfter = neighborAfter ? Math.min(Math.max(0, neighborAfter.start - clip.end) / MAX_GAP2, 1) : 0;
+  const last10 = recentEdits2.slice(-10);
+  const total = Math.max(last10.length, 1);
+  const recentCutFrac = last10.filter((e) => e.editType === "cut").length / total;
+  const recentTrimHeadFrac = last10.filter((e) => e.editType === "trim-head").length / total;
+  const recentTrimTailFrac = last10.filter((e) => e.editType === "trim-tail").length / total;
+  const recentDeleteFrac = last10.filter((e) => e.editType === "delete").length / total;
+  const approved = last10.filter((e) => e.quality !== "bad").length;
+  const recentApprovalRate = last10.length > 0 ? approved / last10.length : 0.5;
+  return [
+    trackType,
+    trackIndex,
+    clipDuration,
+    clipPosition,
+    playheadInClip,
+    timeSinceLastEdit,
+    hasNeighborBefore,
+    hasNeighborAfter,
+    gapBefore,
+    gapAfter,
+    recentCutFrac,
+    recentTrimHeadFrac,
+    recentTrimTailFrac,
+    recentDeleteFrac,
+    recentApprovalRate
+  ];
+}
+function runInference(input, classifier, regressors, clip, threshold) {
+  const classifierOutput = classifier.run(input);
+  const sorted = Object.entries(classifierOutput).sort((a, b) => b[1] - a[1]);
+  const [bestType, bestConfidence] = sorted[0];
+  if (bestConfidence < threshold) return null;
+  let parameters = {};
+  const regressor = regressors.get(bestType);
+  if (regressor) {
+    const paramOutput = regressor.run(input);
+    parameters = decodeParameters(bestType, Array.from(paramOutput), clip.duration);
+  } else {
+    parameters = defaultParameters(bestType, clip.duration);
+  }
+  return {
+    editType: bestType,
+    confidence: bestConfidence,
+    parameters,
+    targetClip: {
+      trackIndex: clip.trackIndex,
+      trackType: clip.trackType,
+      clipIndex: clip.clipIndex,
+      clipName: clip.name,
+      start: clip.start,
+      end: clip.end
+    },
+    createdAt: Date.now()
+  };
+}
+function decodeParameters(editType, output, clipDuration) {
+  const val = output[0] ?? 0.5;
+  switch (editType) {
+    case "cut":
+      return { splitRatio: Math.max(0.05, Math.min(0.95, val)) };
+    case "trim-head":
+    case "trim-tail":
+      return { trimAmount: val * Math.min(clipDuration, MAX_DURATION2) };
+    case "delete":
+      return { ripple: val > 0.5 };
+    default:
+      return {};
+  }
+}
+function defaultParameters(editType, clipDuration) {
+  switch (editType) {
+    case "cut":
+      return { splitRatio: 0.5 };
+    case "trim-head":
+    case "trim-tail":
+      return { trimAmount: clipDuration * 0.1 };
+    case "delete":
+      return { ripple: true };
+    default:
+      return {};
+  }
+}
+
 // ../../plugins/cutting-board/src/index.ts
 var POLL_INTERVAL = 500;
 var SNAPSHOT_RING_SIZE = 20;
@@ -639,6 +989,12 @@ var previousSnapshot = null;
 var snapshotHistory = [];
 var editCount = 0;
 var eventSubs = [];
+var autocutEnabled = false;
+var autocutClassifier = null;
+var autocutRegressors = /* @__PURE__ */ new Map();
+var autocutThreshold = 0.6;
+var lastSuggestionTime = 0;
+var currentSuggestion = null;
 var recentEdits = /* @__PURE__ */ new Map();
 var DEDUPE_WINDOW = 2e3;
 function isDuplicate(change) {
@@ -663,6 +1019,49 @@ function cleanup() {
   snapshotHistory = [];
   currentSessionId = null;
   editCount = 0;
+  autocutEnabled = false;
+  autocutClassifier = null;
+  autocutRegressors = /* @__PURE__ */ new Map();
+  currentSuggestion = null;
+}
+async function runAutocutSuggestion(ctx) {
+  try {
+    const seq = await ctx.services.timeline.getActiveSequence();
+    if (!seq) return;
+    const playhead = await ctx.services.timeline.getPlayheadPosition();
+    const target = findTargetClip(seq, playhead);
+    if (!target) return;
+    const recentRecords = db ? db.getRecentRecords(10) : [];
+    const recentEditHistory = recentRecords.map((r) => ({
+      editType: r.edit_type,
+      timestamp: r.detected_at,
+      quality: r.rating === 1 ? "good" : r.rating === 0 ? "bad" : "good"
+    }));
+    const input = buildInferenceInput(
+      target.clip,
+      playhead,
+      recentEditHistory,
+      target.neighborBefore,
+      target.neighborAfter
+    );
+    const suggestion = runInference(input, autocutClassifier, autocutRegressors, {
+      trackIndex: target.trackIndex,
+      trackType: target.trackType,
+      clipIndex: target.clipIndex,
+      name: target.clip.name,
+      start: target.clip.start,
+      end: target.clip.end,
+      duration: target.clip.duration
+    }, autocutThreshold);
+    if (suggestion) {
+      currentSuggestion = suggestion;
+      lastSuggestionTime = Date.now();
+      ctx.ui.pushToPanel("autocut-suggestion", suggestion);
+      ctx.log.debug(`Autocut suggestion: ${suggestion.editType} (${(suggestion.confidence * 100).toFixed(0)}%) on "${suggestion.targetClip.clipName}"`);
+    }
+  } catch (err) {
+    ctx.log.error("Autocut inference error:", err);
+  }
 }
 var pollCount = 0;
 async function pollTimeline(ctx) {
@@ -684,7 +1083,12 @@ async function pollTimeline(ctx) {
     if (pollCount % 20 === 0) {
       ctx.log.debug(`Poll #${pollCount}: ${totalClips} clips, hash=${snapshot.hash.slice(0, 8)} (prev=${previousSnapshot.hash.slice(0, 8)})`);
     }
-    if (snapshot.hash === previousSnapshot.hash) return;
+    if (snapshot.hash === previousSnapshot.hash) {
+      if (autocutEnabled && autocutClassifier && Date.now() - lastSuggestionTime > 3e3) {
+        await runAutocutSuggestion(ctx);
+      }
+      return;
+    }
     ctx.log.info(`Poll: hash changed! ${previousSnapshot.hash.slice(0, 8)} -> ${snapshot.hash.slice(0, 8)}, ${totalClips} clips`);
     const isUndo = checkForUndo(snapshot, snapshotHistory);
     const changes = diffSnapshots(previousSnapshot, snapshot);
@@ -762,6 +1166,29 @@ var src_default = definePlugin({
         ctx.log.info(`Boosted record ${recordId}`);
       }
     }));
+    const tryAutoStart = async () => {
+      if (pollTimer) return;
+      try {
+        const seq = await ctx.services.timeline.getActiveSequence();
+        if (seq && db) {
+          currentSessionId = db.createSession(seq.sequenceId, seq.name);
+          editCount = 0;
+          previousSnapshot = null;
+          snapshotHistory = [];
+          pollTimer = setInterval(() => pollTimeline(ctx), POLL_INTERVAL);
+          ctx.log.info(`Auto-started capture on "${seq.name}" (session ${currentSessionId})`);
+        }
+      } catch {
+      }
+    };
+    await tryAutoStart();
+    if (!pollTimer) {
+      const retryTimer = setInterval(async () => {
+        await tryAutoStart();
+        if (pollTimer) clearInterval(retryTimer);
+      }, 5e3);
+      eventSubs.push({ unsubscribe: () => clearInterval(retryTimer) });
+    }
     ctx.log.info("Cutting Board activated");
   },
   async deactivate(ctx) {
@@ -881,6 +1308,203 @@ var src_default = definePlugin({
       ctx.ui.showToast(`Exported ${data.records.length} records to ${exportPath}`, "success");
       ctx.log.info(`Exported data to ${exportPath}`);
       return { path: exportPath, sessions: data.sessions.length, records: data.records.length };
+    },
+    "sync-data": async (ctx) => {
+      if (!db) {
+        db = new CuttingBoardDB(ctx.dataDir);
+      }
+      const sessions = db.getUnsyncedSessions();
+      const records = db.getUnsyncedRecords(500);
+      return { sessions, records };
+    },
+    "mark-synced": async (ctx, args) => {
+      if (!db) {
+        db = new CuttingBoardDB(ctx.dataDir);
+      }
+      const { table, ids } = args;
+      db.markSynced(table, ids);
+      return { marked: ids.length };
+    },
+    "train-model": async (ctx) => {
+      if (!db) db = new CuttingBoardDB(ctx.dataDir);
+      const records = db.getQualityRecords();
+      if (records.length < 30) {
+        ctx.ui.showToast(`Need at least 30 edits for training (have ${records.length})`, "warning");
+        return null;
+      }
+      const examples = records.map((r) => extractFeatures(r));
+      ctx.log.info(`Training classifier on ${examples.length} examples...`);
+      const { model: classifierJson, accuracy } = trainClassifier(examples);
+      const regressorJsons = {};
+      for (const editType of ["cut", "trim-head", "trim-tail", "delete", "move", "add"]) {
+        const regressorJson = trainRegressor(editType, examples);
+        if (regressorJson) {
+          regressorJsons[editType] = regressorJson;
+          ctx.log.info(`Trained ${editType} regressor`);
+        }
+      }
+      const latestRun = db.getLatestTrainingRun();
+      const version = (latestRun?.version ?? 0) + 1;
+      const serialized = {
+        version,
+        trainedAt: Date.now(),
+        trainingSize: examples.length,
+        accuracy,
+        classifier: classifierJson,
+        regressors: regressorJsons
+      };
+      saveModel(serialized, ctx.dataDir);
+      db.recordTrainingRun(examples.length, accuracy, version);
+      const msg = `Model v${version} trained: ${(accuracy * 100).toFixed(1)}% accuracy on ${examples.length} examples`;
+      ctx.log.info(msg);
+      ctx.ui.showToast(msg, "success");
+      return { version, accuracy, trainingSize: examples.length, regressors: Object.keys(regressorJsons) };
+    },
+    "start-autocut": async (ctx) => {
+      if (autocutEnabled) {
+        ctx.ui.showToast("Autocut already running", "warning");
+        return { enabled: true };
+      }
+      const serialized = loadModel(ctx.dataDir);
+      if (!serialized) {
+        ctx.ui.showToast("No trained model found \u2014 run train-model first", "warning");
+        return null;
+      }
+      autocutClassifier = instantiateNet(serialized.classifier);
+      autocutRegressors = /* @__PURE__ */ new Map();
+      for (const [editType, json] of Object.entries(serialized.regressors)) {
+        autocutRegressors.set(editType, instantiateNet(json));
+      }
+      autocutEnabled = true;
+      lastSuggestionTime = 0;
+      currentSuggestion = null;
+      ctx.log.info(`Autocut started (model v${serialized.version}, ${(serialized.accuracy * 100).toFixed(1)}% accuracy)`);
+      ctx.ui.showToast("Autocut enabled", "success");
+      return { version: serialized.version, accuracy: serialized.accuracy };
+    },
+    "stop-autocut": async (ctx) => {
+      autocutEnabled = false;
+      autocutClassifier = null;
+      autocutRegressors = /* @__PURE__ */ new Map();
+      currentSuggestion = null;
+      ctx.ui.showToast("Autocut disabled", "info");
+      return { enabled: false };
+    },
+    "autocut-status": async (ctx) => {
+      if (!db) db = new CuttingBoardDB(ctx.dataDir);
+      const serialized = loadModel(ctx.dataDir);
+      const status = {
+        enabled: autocutEnabled,
+        model: serialized ? {
+          version: serialized.version,
+          trainedAt: serialized.trainedAt,
+          trainingSize: serialized.trainingSize,
+          accuracy: serialized.accuracy,
+          regressors: Object.keys(serialized.regressors),
+          staleness: Math.round((Date.now() - serialized.trainedAt) / 1e3 / 60)
+        } : null,
+        threshold: autocutThreshold,
+        currentSuggestion: currentSuggestion ? {
+          editType: currentSuggestion.editType,
+          confidence: currentSuggestion.confidence,
+          clipName: currentSuggestion.targetClip.clipName
+        } : null
+      };
+      if (serialized) {
+        ctx.ui.showToast(
+          `Autocut ${autocutEnabled ? "ON" : "OFF"} | Model v${serialized.version}: ${(serialized.accuracy * 100).toFixed(0)}% accuracy, ${serialized.trainingSize} examples, ${status.model.staleness}m old`,
+          "info"
+        );
+      } else {
+        ctx.ui.showToast("No model trained yet", "info");
+      }
+      return status;
+    },
+    "accept-suggestion": async (ctx) => {
+      if (!currentSuggestion) {
+        ctx.ui.showToast("No current suggestion", "warning");
+        return null;
+      }
+      const suggestion = currentSuggestion;
+      const { timeline } = ctx.services;
+      const seq = await timeline.getActiveSequence();
+      if (!seq) {
+        ctx.ui.showToast("No active sequence", "warning");
+        return null;
+      }
+      const tracks = suggestion.targetClip.trackType === "video" ? seq.videoTracks : seq.audioTracks;
+      const track = tracks.find((t) => t.index === suggestion.targetClip.trackIndex);
+      if (!track || suggestion.targetClip.clipIndex >= track.clips.length) {
+        ctx.ui.showToast("Target clip no longer exists", "warning");
+        currentSuggestion = null;
+        return null;
+      }
+      const clip = track.clips[suggestion.targetClip.clipIndex];
+      let success = false;
+      try {
+        switch (suggestion.editType) {
+          case "cut": {
+            const splitTime = clip.start + (suggestion.parameters.splitRatio ?? 0.5) * clip.duration;
+            success = await timeline.splitClip(
+              suggestion.targetClip.trackIndex,
+              suggestion.targetClip.clipIndex,
+              suggestion.targetClip.trackType,
+              splitTime
+            );
+            break;
+          }
+          case "trim-head": {
+            const trimAmount = suggestion.parameters.trimAmount ?? clip.duration * 0.1;
+            success = await timeline.setClipInOutPoints(
+              suggestion.targetClip.trackIndex,
+              suggestion.targetClip.clipIndex,
+              clip.inPoint + trimAmount,
+              clip.outPoint
+            );
+            break;
+          }
+          case "trim-tail": {
+            const trimAmount = suggestion.parameters.trimAmount ?? clip.duration * 0.1;
+            success = await timeline.setClipInOutPoints(
+              suggestion.targetClip.trackIndex,
+              suggestion.targetClip.clipIndex,
+              clip.inPoint,
+              clip.outPoint - trimAmount
+            );
+            break;
+          }
+          case "delete": {
+            if (suggestion.parameters.ripple) {
+              success = await timeline.rippleDelete(
+                suggestion.targetClip.trackIndex,
+                suggestion.targetClip.clipIndex,
+                suggestion.targetClip.trackType
+              );
+            } else {
+              success = await timeline.liftClip(
+                suggestion.targetClip.trackIndex,
+                suggestion.targetClip.clipIndex,
+                suggestion.targetClip.trackType
+              );
+            }
+            break;
+          }
+          default:
+            ctx.ui.showToast(`Unsupported edit type: ${suggestion.editType}`, "warning");
+            return null;
+        }
+      } catch (err) {
+        ctx.log.error("Failed to execute suggestion:", err);
+        ctx.ui.showToast("Failed to execute suggestion", "error");
+        return null;
+      }
+      if (success) {
+        ctx.ui.showToast(`Applied ${suggestion.editType} edit`, "success");
+        currentSuggestion = null;
+      } else {
+        ctx.ui.showToast("Edit execution failed", "error");
+      }
+      return { success, editType: suggestion.editType };
     }
   }
 });

@@ -22,6 +22,8 @@ import type {
   AnalysisProgress,
   AnalysisOptions,
   ExportOptions,
+  CuttingBoardAggregateStats,
+  CuttingBoardTrainingRun,
 } from '@mayday/types';
 
 const mayday = {
@@ -81,6 +83,8 @@ const mayday = {
       ipcRenderer.invoke('config:setSupabaseUrl', url),
     setSupabaseAnonKey: (key: string): Promise<LauncherConfig> =>
       ipcRenderer.invoke('config:setSupabaseAnonKey', key),
+    setAutoUpdate: (enabled: boolean): Promise<LauncherConfig> =>
+      ipcRenderer.invoke('config:setAutoUpdate', enabled),
     migrateSyncSource: (oldPath: string, newPath: string): Promise<LauncherConfig> =>
       ipcRenderer.invoke('config:migrateSyncSource', oldPath, newPath),
     onMigrationProgress: (cb: (progress: MigrationProgress) => void) => {
@@ -113,6 +117,11 @@ const mayday = {
       ipcRenderer.on('app:updateProgress', handler);
       return () => ipcRenderer.off('app:updateProgress', handler);
     },
+    onAutoUpdateStatus: (cb: (status: { state: string; message?: string }) => void) => {
+      const handler = (_: unknown, status: { state: string; message?: string }) => cb(status);
+      ipcRenderer.on('app:autoUpdateStatus', handler);
+      return () => ipcRenderer.off('app:autoUpdateStatus', handler);
+    },
   },
 
   tray: {
@@ -121,6 +130,15 @@ const mayday = {
       ipcRenderer.on('tray:sync', handler);
       return () => ipcRenderer.off('tray:sync', handler);
     },
+  },
+
+  cuttingBoard: {
+    getAggregateStats: (): Promise<CuttingBoardAggregateStats | null> =>
+      ipcRenderer.invoke('cuttingBoard:getAggregateStats'),
+    getTrainingRuns: (): Promise<CuttingBoardTrainingRun[]> =>
+      ipcRenderer.invoke('cuttingBoard:getTrainingRuns'),
+    trainModel: (): Promise<unknown> =>
+      ipcRenderer.invoke('cuttingBoard:trainModel'),
   },
 
   youtube: {

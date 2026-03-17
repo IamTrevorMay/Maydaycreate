@@ -7,3 +7,4 @@ export * from './ai.js';
 export * from './effects.js';
 export * from './launcher.js';
 export * from './youtube.js';
+export * from './cutting-board.js';

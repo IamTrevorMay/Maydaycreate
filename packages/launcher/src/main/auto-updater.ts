@@ -196,6 +196,34 @@ export async function pushVersion(sourceRepoPath: string, win: BrowserWindow): P
   }
 }
 
+function sendAutoUpdateStatus(win: BrowserWindow, state: string, message?: string): void {
+  if (!win.isDestroyed()) {
+    win.webContents.send('app:autoUpdateStatus', { state, message });
+  }
+}
+
+export async function silentAutoUpdate(sourceRepoPath: string, win: BrowserWindow): Promise<void> {
+  try {
+    // Don't slow down launch
+    await new Promise((r) => setTimeout(r, 5000));
+
+    sendAutoUpdateStatus(win, 'checking');
+    const result = await checkForUpdates(sourceRepoPath);
+
+    if (!result.updateAvailable) {
+      sendAutoUpdateStatus(win, 'idle');
+      return;
+    }
+
+    sendAutoUpdateStatus(win, 'updating', `${result.commitsBehind} commit(s) behind`);
+    await installUpdate(sourceRepoPath, win);
+    sendAutoUpdateStatus(win, 'ready');
+  } catch (err) {
+    console.error('[AutoUpdater] silentAutoUpdate failed:', err);
+    sendAutoUpdateStatus(win, 'error', err instanceof Error ? err.message : String(err));
+  }
+}
+
 export function relaunchApp(): void {
   app.relaunch();
   app.exit(0);

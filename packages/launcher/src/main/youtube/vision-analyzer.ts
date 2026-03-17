@@ -45,12 +45,12 @@ export class VisionAnalyzer {
   async analyzeFramePair(
     frameBeforePath: string,
     frameAfterPath: string,
-    context: { videoTitle: string; timestamp: number; previousEffects: string[] },
+    context: { videoTitle: string; timestamp: number; previousEffects: string[]; skipCuts?: boolean },
   ): Promise<FramePairResult> {
     const beforeData = fs.readFileSync(frameBeforePath);
     const afterData = fs.readFileSync(frameAfterPath);
 
-    const systemPrompt = this.buildSystemPrompt();
+    const systemPrompt = this.buildSystemPrompt(undefined, context.skipCuts);
 
     const response = await this.client.messages.create({
       model: 'claude-sonnet-4-6',
@@ -72,7 +72,7 @@ Return a JSON object with this exact structure:
 {
   "effects": [
     {
-      "category": "one of: ${EFFECT_CATEGORIES.join(', ')}",
+      "category": "one of: ${(context.skipCuts ? EFFECT_CATEGORIES.filter(c => c !== 'cut') : EFFECT_CATEGORIES).join(', ')}",
       "secondaryCategories": [],
       "description": "what changed and how",
       "confidence": "high|medium|low",
@@ -110,7 +110,14 @@ If the frames show no significant editing change (just natural motion), return {
     });
 
     const text = response.content.find(b => b.type === 'text')?.text || '{"effects":[]}';
-    return this.parseResponse(text);
+    const result = this.parseResponse(text);
+
+    // Safety filter: strip cuts if skipCuts is enabled
+    if (context.skipCuts) {
+      result.effects = result.effects.filter(e => e.category !== 'cut');
+    }
+
+    return result;
   }
 
   async analyzeOverallStyle(
@@ -165,12 +172,13 @@ Return JSON:
     }
   }
 
-  private buildSystemPrompt(corrections?: TrainingCorrection[]): string {
+  private buildSystemPrompt(corrections?: TrainingCorrection[], skipCuts?: boolean): string {
+    const categories = skipCuts ? EFFECT_CATEGORIES.filter(c => c !== 'cut') : EFFECT_CATEGORIES;
     let prompt = `You are an expert video editor analyzing frames to reverse-engineer editing techniques.
 
 Your job:
 1. Compare before/after frames and identify visual changes caused by editing
-2. Categorize each effect using these categories: ${EFFECT_CATEGORIES.join(', ')}
+2. Categorize each effect using these categories: ${categories.join(', ')}
 3. Rate your confidence: high (obvious effect), medium (likely effect), low (uncertain)
 4. Provide step-by-step Premiere Pro recreation instructions
 5. List suggested Premiere Pro effects and estimated parameter values
@@ -183,6 +191,10 @@ Distinguish between:
 - Scene changes with no transition (hard cuts)
 
 Be specific about Premiere Pro effect names and parameters.`;
+
+    if (skipCuts) {
+      prompt += `\n\nIMPORTANT: Do NOT report simple hard cuts (straight scene changes with no transition effect). Only report effects that involve creative editing techniques — transitions, color grades, overlays, etc. If a frame pair is just a hard cut between scenes, return {"effects": []}.`;
+    }
 
     if (corrections && corrections.length > 0) {
       prompt += '\n\nPast corrections to learn from:\n';

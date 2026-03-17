@@ -9,15 +9,15 @@ interface VideoInputProps {
   onAnalyze: (url: string, options?: AnalysisOptions) => void;
   onAddToQueue: (url: string, title?: string) => void;
   loading: boolean;
+  skipCuts: boolean;
 }
 
-export function VideoInput({ onAnalyze, onAddToQueue, loading }: VideoInputProps): React.ReactElement {
+export function VideoInput({ onAnalyze, onAddToQueue, loading, skipCuts }: VideoInputProps): React.ReactElement {
   const ipc = useIpc();
   const [url, setUrl] = useState('');
   const [info, setInfo] = useState<YouTubeVideoInfo | null>(null);
   const [fetching, setFetching] = useState(false);
   const [error, setError] = useState('');
-  const [skipCuts, setSkipCuts] = useState(true);
 
   const isValid = YT_REGEX.test(url.trim());
 
@@ -130,15 +130,6 @@ export function VideoInput({ onAnalyze, onAddToQueue, loading }: VideoInputProps
               >
                 {loading ? 'Starting...' : 'Analyze'}
               </button>
-              <label style={{ display: 'flex', alignItems: 'center', gap: 4, cursor: 'pointer' }}>
-                <input
-                  type="checkbox"
-                  checked={skipCuts}
-                  onChange={(e) => setSkipCuts(e.target.checked)}
-                  style={{ accentColor: c.accent.primary }}
-                />
-                <span style={{ color: c.text.secondary, fontSize: 11 }}>Skip Cuts</span>
-              </label>
               <button
                 onClick={() => onAddToQueue(url.trim(), info.title)}
                 style={{

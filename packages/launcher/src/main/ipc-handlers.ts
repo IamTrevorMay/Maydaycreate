@@ -9,6 +9,7 @@ import { migrateSyncSource } from '@mayday/sync-engine';
 import type { BrowserWindow } from 'electron';
 import type { YouTubeAnalyzer } from './youtube/youtube-analyzer.js';
 import { registerYouTubeHandlers } from './youtube/ipc-youtube.js';
+import { registerCuttingBoardHandlers } from './cutting-board-ipc.js';
 import { checkForUpdates, installUpdate, pushVersion, relaunchApp } from './auto-updater.js';
 
 let _youtubeAnalyzer: YouTubeAnalyzer | null = null;
@@ -38,6 +39,8 @@ export function setMainWindow(win: BrowserWindow): void {
 }
 
 export function registerIpcHandlers(): void {
+  registerCuttingBoardHandlers();
+
   // ── Plugins ────────────────────────────────────────────────────────────────
 
   ipcMain.handle('plugins:getAll', () => {
@@ -170,6 +173,10 @@ export function registerIpcHandlers(): void {
 
   ipcMain.handle('config:setSupabaseAnonKey', (_e, key: string) => {
     return updateConfig({ supabaseAnonKey: key });
+  });
+
+  ipcMain.handle('config:setAutoUpdate', (_e, enabled: boolean) => {
+    return updateConfig({ autoUpdate: enabled });
   });
 
   ipcMain.handle('config:migrateSyncSource', async (_e, oldPath: string, newPath: string) => {
