@@ -152,6 +152,38 @@ export class YouTubeDB {
         created_at TEXT NOT NULL
       );
     `);
+
+    // Migration: consolidate effect categories (15 → 8)
+    this.db.exec(`
+      UPDATE effects SET category = 'lens-effect' WHERE category IN ('blur', 'stabilization');
+      UPDATE effects SET category = 'transform' WHERE category IN ('scale', 'opacity');
+      UPDATE effects SET category = 'compositing' WHERE category IN ('mask', 'composite');
+      UPDATE effects SET category = 'overlay' WHERE category IN ('text-overlay', 'motion-graphics');
+      UPDATE effects SET category = 'other' WHERE category IN ('audio-visual', 'cut');
+    `);
+    // Migrate secondary_categories JSON
+    const rowsToMigrate = this.db.prepare(
+      "SELECT id, secondary_categories FROM effects WHERE secondary_categories LIKE '%cut%' OR secondary_categories LIKE '%blur%' OR secondary_categories LIKE '%stabilization%' OR secondary_categories LIKE '%scale%' OR secondary_categories LIKE '%opacity%' OR secondary_categories LIKE '%mask%' OR secondary_categories LIKE '%composite%' OR secondary_categories LIKE '%text-overlay%' OR secondary_categories LIKE '%motion-graphics%' OR secondary_categories LIKE '%audio-visual%'"
+    ).all() as Array<{ id: string; secondary_categories: string }>;
+    if (rowsToMigrate.length > 0) {
+      const CATEGORY_MAP: Record<string, string> = {
+        cut: 'other', blur: 'lens-effect', stabilization: 'lens-effect',
+        scale: 'transform', opacity: 'transform', mask: 'compositing',
+        composite: 'compositing', 'text-overlay': 'overlay',
+        'motion-graphics': 'overlay', 'audio-visual': 'other',
+      };
+      const updateStmt = this.db.prepare('UPDATE effects SET secondary_categories = ? WHERE id = ?');
+      const migrateTx = this.db.transaction((rows: Array<{ id: string; secondary_categories: string }>) => {
+        for (const row of rows) {
+          try {
+            const cats: string[] = JSON.parse(row.secondary_categories || '[]');
+            const mapped = [...new Set(cats.map(c => CATEGORY_MAP[c] || c))];
+            updateStmt.run(JSON.stringify(mapped), row.id);
+          } catch { /* skip malformed JSON */ }
+        }
+      });
+      migrateTx(rowsToMigrate);
+    }
   }
 
   // ── Analyses ──────────────────────────────────────────────────────────────
@@ -210,7 +242,7 @@ export class YouTubeDB {
 
   listAnalyses(): VideoAnalysisSummary[] {
     const rows = this.db.prepare(`
-      SELECT a.id, a.title, a.channel, a.duration, a.thumbnail_url, a.thumbnail_path, a.status, a.effect_count, a.created_at,
+      SELECT a.id, a.title, a.channel, a.duration, a.thumbnail_url, a.thumbnail_path, a.status, a.effect_count, a.frame_count, a.pause_frame_index, a.created_at,
         (SELECT COUNT(*) FROM effects WHERE analysis_id = a.id AND rating IS NOT NULL) as rated_count
       FROM analyses a ORDER BY a.created_at DESC
     `).all() as Record<string, unknown>[];
@@ -223,9 +255,18 @@ export class YouTubeDB {
       thumbnailPath: (r.thumbnail_path as string) || '',
       status: r.status as AnalysisStatus,
       effectCount: (r.effect_count as number) || 0,
+      frameCount: (r.frame_count as number) || 0,
+      pauseFrameIndex: (r.pause_frame_index as number | null) ?? null,
       ratedCount: (r.rated_count as number) || 0,
       createdAt: r.created_at as string,
     }));
+  }
+
+  resetAnalysisData(id: string): void {
+    this.db.prepare('DELETE FROM effects WHERE analysis_id = ?').run(id);
+    this.db.prepare('DELETE FROM frames WHERE analysis_id = ?').run(id);
+    this.db.prepare('DELETE FROM no_effect_pairs WHERE analysis_id = ?').run(id);
+    this.db.prepare('UPDATE analyses SET frame_count = 0, effect_count = 0, pause_frame_index = NULL, video_path = NULL, frames_dir = NULL, summary = \'\', style_notes = \'\', error = NULL WHERE id = ?').run(id);
   }
 
   deleteAnalysis(id: string): boolean {
@@ -305,6 +346,16 @@ export class YouTubeDB {
 
   setSourceIdentification(effectId: string, source: string): void {
     this.db.prepare('UPDATE effects SET source_identification = ? WHERE id = ?').run(source, effectId);
+  }
+
+  updateEffectMerge(id: string, endTime: number, description: string, confidence: string): void {
+    this.db.prepare('UPDATE effects SET end_time = ?, description = ?, confidence = ? WHERE id = ?').run(endTime, description, confidence, id);
+  }
+
+  deleteEffects(ids: string[]): void {
+    if (ids.length === 0) return;
+    const placeholders = ids.map(() => '?').join(',');
+    this.db.prepare(`DELETE FROM effects WHERE id IN (${placeholders})`).run(...ids);
   }
 
   // ── Corrections ───────────────────────────────────────────────────────────

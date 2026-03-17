@@ -89,7 +89,7 @@ export class PluginLoader {
 
         await this.lifecycle.deactivatePlugin(manifest.id);
         const mainPath = path.join(pluginDir, manifest.main);
-        await this.lifecycle.loadPlugin(manifest, mainPath);
+        await this.lifecycle.loadPlugin(manifest, mainPath, true);
         await this.lifecycle.activatePlugin(manifest.id);
 
         await this.eventBus.emit('plugin:reloaded', 'loader', { pluginId: manifest.id });

@@ -3,7 +3,7 @@ import path from 'path';
 import fs from 'fs';
 import { is } from '@electron-toolkit/utils';
 import { loadConfig } from './config-store.js';
-import { startEmbeddedServer } from './server-bridge.js';
+import { startEmbeddedServer, getServerBridge } from './server-bridge.js';
 import {
   registerIpcHandlers,
   setSyncEngine,
@@ -18,7 +18,9 @@ import { SyncEngine } from '@mayday/sync-engine';
 import type { SyncSource } from '@mayday/sync-engine';
 import { YouTubeAnalyzer } from './youtube/youtube-analyzer.js';
 import { YouTubeSyncService } from './youtube/youtube-sync.js';
+import { PresetSyncService } from './preset-sync.js';
 import { initAutoUpdater, silentAutoUpdate } from './auto-updater.js';
+import { installStreamDeckPlugin } from './stream-deck-installer.js';
 
 // Augment PATH for Dock-launched apps (they don't inherit shell PATH)
 if (app.isPackaged) {
@@ -184,12 +186,39 @@ app.whenReady().then(async () => {
   });
   ytSync.startPeriodicSync(youtubeAnalyzer.database);
 
+  // Preset Vault → Supabase bidirectional sync
+  const presetSync = new PresetSyncService();
+  presetSync.initialize({
+    supabaseUrl: config.supabaseUrl,
+    supabaseAnonKey: config.supabaseAnonKey,
+    machineId: config.machineId,
+    machineName: config.machineName,
+    presetDataDir: path.join(app.getPath('userData'), 'plugin-data', 'preset-vault'),
+  });
+
+  const bridge = getServerBridge();
+  if (presetSync.isEnabled() && bridge?.eventBus) {
+    bridge.eventBus.on('plugin:preset-vault:preset-saved', (event: { data?: { id?: string } }) => {
+      presetSync.queuePush(event.data?.id);
+      presetSync.pushChanges().catch(() => {});
+    });
+    bridge.eventBus.on('plugin:preset-vault:preset-deleted', (event: { data?: { presetId?: string } }) => {
+      presetSync.queueDelete(event.data?.presetId);
+      presetSync.pushChanges().catch(() => {});
+    });
+  }
+
+  presetSync.startPeriodicSync();
+
   // If sync source is configured, start a sync
   if (config.syncSourcePath) {
     syncEngine.runSync().catch(err => {
       console.error('[Launcher] Initial sync failed:', err);
     });
   }
+
+  // Install/update Stream Deck plugin if Stream Deck is present
+  installStreamDeckPlugin();
 
   // Auto-updater: wire electron-updater events to renderer
   initAutoUpdater(mainWindow);

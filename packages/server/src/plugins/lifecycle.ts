@@ -41,7 +41,7 @@ export class PluginLifecycle {
     private dataDir: string,
   ) {}
 
-  async loadPlugin(manifest: PluginManifest, mainPath: string): Promise<void> {
+  async loadPlugin(manifest: PluginManifest, mainPath: string, forceRebuild = false): Promise<void> {
     const entry: PluginEntry = {
       manifest,
       status: 'discovered',
@@ -51,35 +51,46 @@ export class PluginLifecycle {
     try {
       let importPath = mainPath;
 
-      // Transpile .ts plugins to a .mjs file next to the source so node_modules resolves
+      // Transpile .ts plugins to a .mjs file in the plugin root so node_modules resolves
       if (mainPath.endsWith('.ts')) {
-        const pluginDir = path.dirname(mainPath);
-        const outFile = path.join(pluginDir, '.mayday-build', 'index.mjs');
+        // Place build output at plugin root (not inside src/) to avoid triggering tsx watch
+        const pluginRoot = path.resolve(path.dirname(mainPath), '..');
+        const outFile = path.join(pluginRoot, '.mayday-build', 'index.mjs');
 
-        // Find node_modules that contain @mayday packages so plugins can resolve them
-        const thisFile = fileURLToPath(import.meta.url);
-        const nodeModulesDirs: string[] = [];
-        let dir = path.dirname(thisFile);
-        while (dir !== path.dirname(dir)) {
-          const nm = path.join(dir, 'node_modules');
-          if (fs.existsSync(path.join(nm, '@mayday', 'sdk'))) {
-            nodeModulesDirs.push(nm);
-            break;
-          }
-          dir = path.dirname(dir);
+        // Skip rebuild if output is already up-to-date (prevents tsx watch restart loop)
+        let needsBuild = forceRebuild || !fs.existsSync(outFile);
+        if (!needsBuild) {
+          const outMtime = fs.statSync(outFile).mtimeMs;
+          const srcDir = path.dirname(mainPath);
+          needsBuild = this.anySrcNewer(srcDir, outMtime);
         }
 
-        await build({
-          entryPoints: [mainPath],
-          bundle: true,
-          format: 'esm',
-          platform: 'node',
-          outfile: outFile,
-          // Keep native/Node modules external — they resolve from the main process
-          external: ['better-sqlite3', 'brain.js', 'gpu.js', 'fs', 'path', 'os', 'crypto', 'util', 'events', 'stream', 'url', 'http', 'https', 'net', 'child_process', 'worker_threads'],
-          // Allow plugins to resolve @mayday/* packages from the server's module tree
-          nodePaths: nodeModulesDirs,
-        });
+        if (needsBuild) {
+          // Find node_modules that contain @mayday packages so plugins can resolve them
+          const thisFile = fileURLToPath(import.meta.url);
+          const nodeModulesDirs: string[] = [];
+          let dir = path.dirname(thisFile);
+          while (dir !== path.dirname(dir)) {
+            const nm = path.join(dir, 'node_modules');
+            if (fs.existsSync(path.join(nm, '@mayday', 'sdk'))) {
+              nodeModulesDirs.push(nm);
+              break;
+            }
+            dir = path.dirname(dir);
+          }
+
+          await build({
+            entryPoints: [mainPath],
+            bundle: true,
+            format: 'esm',
+            platform: 'node',
+            outfile: outFile,
+            // Keep native/Node modules external — they resolve from the main process
+            external: ['better-sqlite3', 'brain.js', 'gpu.js', 'fs', 'path', 'os', 'crypto', 'util', 'events', 'stream', 'url', 'http', 'https', 'net', 'child_process', 'worker_threads'],
+            // Allow plugins to resolve @mayday/* packages from the server's module tree
+            nodePaths: nodeModulesDirs,
+          });
+        }
         importPath = outFile;
       }
 
@@ -167,6 +178,25 @@ export class PluginLifecycle {
       manifest: e.manifest,
       status: e.status,
     }));
+  }
+
+  /** Check if any .ts file under srcDir is newer than the given mtime */
+  private anySrcNewer(srcDir: string, outMtime: number): boolean {
+    try {
+      const entries = fs.readdirSync(srcDir, { withFileTypes: true });
+      for (const entry of entries) {
+        const full = path.join(srcDir, entry.name);
+        if (entry.isDirectory()) {
+          if (entry.name === 'node_modules' || entry.name === '.mayday-build') continue;
+          if (this.anySrcNewer(full, outMtime)) return true;
+        } else if (entry.name.endsWith('.ts') || entry.name.endsWith('.tsx')) {
+          if (fs.statSync(full).mtimeMs > outMtime) return true;
+        }
+      }
+    } catch {
+      return true; // If we can't read the dir, rebuild to be safe
+    }
+    return false;
   }
 
   private createPermissionGatedServices(manifest: PluginManifest, log: PluginLogger): PluginServices {

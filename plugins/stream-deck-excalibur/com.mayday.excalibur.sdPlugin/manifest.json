@@ -1,0 +1,39 @@
+{
+  "Actions": [
+    {
+      "Icon": "imgs/action-icon",
+      "Name": "Excalibur Command",
+      "States": [
+        {
+          "Image": "imgs/action-icon",
+          "TitleAlignment": "bottom"
+        }
+      ],
+      "Tooltip": "Trigger an Excalibur user command in Premiere Pro",
+      "UUID": "com.mayday.excalibur.command",
+      "PropertyInspectorPath": "ui/pi.html",
+      "Controllers": ["Keypad"]
+    }
+  ],
+  "Author": "Mayday Create",
+  "Category": "Mayday Create",
+  "CategoryIcon": "imgs/category-icon",
+  "CodePath": "bin/plugin.js",
+  "Description": "Trigger Excalibur commands from your Stream Deck. Select a user command and the keyboard shortcut is sent automatically.",
+  "Icon": "imgs/plugin-icon",
+  "Name": "Excalibur",
+  "Version": "1.0.0",
+  "OS": [
+    { "Platform": "mac", "MinimumVersion": "10.15" },
+    { "Platform": "windows", "MinimumVersion": "10" }
+  ],
+  "SDKVersion": 2,
+  "Software": {
+    "MinimumVersion": "6.4"
+  },
+  "Nodejs": {
+    "Version": "20",
+    "Debug": "enabled"
+  },
+  "UUID": "com.mayday.excalibur"
+}

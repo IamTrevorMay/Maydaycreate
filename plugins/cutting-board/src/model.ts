@@ -60,11 +60,7 @@ export function editTypeToOutput(editType: string): Record<string, number> {
 }
 
 export function trainClassifier(examples: TrainingExample[]): { model: object; accuracy: number } {
-  const net = new brain.NeuralNetwork({
-    hiddenLayers: [32, 16],
-    activation: 'sigmoid',
-  });
-
+  // Use string labels as keys — brain.js handles multi-class natively
   const trainingData: Array<{ input: number[]; output: Record<string, number> }> = [];
 
   for (let i = 0; i < examples.length; i++) {
@@ -81,20 +77,33 @@ export function trainClassifier(examples: TrainingExample[]): { model: object; a
     }
   }
 
-  net.train(trainingData, {
-    iterations: 2000,
-    errorThresh: 0.01,
-    log: false,
+  console.log(`[Model] Training on ${trainingData.length} samples`);
+
+  const net = new brain.NeuralNetwork({
+    hiddenLayers: [32, 16],
+    activation: 'sigmoid',
   });
 
+  const result = net.train(trainingData, {
+    iterations: 20000,
+    errorThresh: 0.005,
+    log: false,
+    logPeriod: 1000,
+  });
+
+  console.log(`[Model] Training complete: ${result.iterations} iterations, error: ${result.error.toFixed(6)}`);
+
+  // Evaluate accuracy on training data
   let correct = 0;
   for (const item of trainingData) {
     const prediction = net.run(item.input) as Record<string, number>;
     const predicted = Object.entries(prediction).sort((a, b) => b[1] - a[1])[0][0];
-    const actual = Object.entries(item.output).find(([, v]) => v === 1)?.[0];
+    const actual = Object.entries(item.output).find(([, v]) => v === 1)?.[0] ?? 'unknown';
     if (predicted === actual) correct++;
   }
   const accuracy = trainingData.length > 0 ? correct / trainingData.length : 0;
+
+  console.log(`[Model] Accuracy: ${(accuracy * 100).toFixed(1)}% (${correct}/${trainingData.length})`)
 
   return { model: net.toJSON(), accuracy };
 }

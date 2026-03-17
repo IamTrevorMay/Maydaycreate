@@ -66,6 +66,8 @@ export interface VideoAnalysisSummary {
   thumbnailPath: string;
   status: AnalysisStatus;
   effectCount: number;
+  frameCount: number;
+  pauseFrameIndex: number | null;
   ratedCount: number;
   createdAt: string;
 }
@@ -84,19 +86,12 @@ export interface ExtractedFrame {
 }
 
 export type EffectCategory =
-  | 'cut'
   | 'transition'
   | 'color-grade'
-  | 'text-overlay'
-  | 'blur'
-  | 'scale'
-  | 'opacity'
+  | 'transform'
+  | 'overlay'
+  | 'compositing'
   | 'speed-ramp'
-  | 'mask'
-  | 'composite'
-  | 'audio-visual'
-  | 'motion-graphics'
-  | 'stabilization'
   | 'lens-effect'
   | 'other';
 
@@ -163,7 +158,7 @@ export interface BatchQueueItem {
 }
 
 export interface AnalysisOptions {
-  skipCuts?: boolean;
+  // Reserved for future analysis options
 }
 
 export type ExportFormat = 'markdown' | 'json';

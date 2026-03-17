@@ -7,6 +7,7 @@ const STATUS_COLORS: Partial<Record<AnalysisStatus, string>> = {
   downloading: c.accent.primary,
   extracting: c.accent.primary,
   analyzing: c.accent.primary,
+  paused: '#fbbf24',
   complete: c.status.success,
   error: c.status.error,
   cancelled: c.text.disabled,
@@ -103,9 +104,11 @@ export function AnalysisCard({ analysis, onClick, onDelete, progress }: Analysis
             <span style={{ fontSize: 10, color: c.text.secondary }}>
               {analysis.status === 'complete'
                 ? `${analysis.effectCount} effects`
-                : progress
-                  ? progress.phase
-                  : analysis.status}
+                : analysis.status === 'paused' && analysis.frameCount > 0
+                  ? `paused ${analysis.pauseFrameIndex ?? 0}/${analysis.frameCount}`
+                  : progress
+                    ? progress.phase
+                    : analysis.status}
             </span>
           </div>
           <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>

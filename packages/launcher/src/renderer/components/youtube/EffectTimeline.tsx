@@ -3,17 +3,13 @@ import { c } from '../../styles.js';
 import type { DetectedEffect, EffectCategory } from '@mayday/types';
 
 export const CATEGORY_COLORS: Partial<Record<EffectCategory, string>> = {
-  cut: '#f87171',
   transition: '#60a5fa',
   'color-grade': '#fbbf24',
-  'text-overlay': '#a78bfa',
-  blur: '#94a3b8',
-  scale: '#34d399',
-  opacity: '#67e8f9',
+  transform: '#34d399',
+  overlay: '#a78bfa',
+  compositing: '#818cf8',
   'speed-ramp': '#fb923c',
-  mask: '#e879f9',
-  composite: '#818cf8',
-  'motion-graphics': '#2dd4bf',
+  'lens-effect': '#94a3b8',
   other: '#6b7280',
 };
 

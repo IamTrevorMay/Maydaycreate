@@ -133,11 +133,12 @@ export function CuttingBoardPage(): React.ReactElement {
             fontSize: 12,
             fontWeight: 600,
             cursor: training ? 'default' : 'pointer',
-            marginBottom: 16,
+            marginBottom: training ? 8 : 16,
           }}
         >
           {training ? 'Training...' : 'Train Model'}
         </button>
+        {training && <TrainingProgress />}
 
         {/* Training runs history */}
         {trainingRuns.length > 0 && (
@@ -207,6 +208,42 @@ function Section({ title, children }: { title: string; children: React.ReactNode
     }}>
       <div style={{ color: c.text.primary, fontSize: 12, fontWeight: 600, marginBottom: 12 }}>{title}</div>
       {children}
+    </div>
+  );
+}
+
+function TrainingProgress(): React.ReactElement {
+  const [pct, setPct] = React.useState(0);
+
+  React.useEffect(() => {
+    // Simulate progress since brain.js training is synchronous and can't report real progress
+    // Training typically takes 5-15 seconds for ~300 examples
+    const interval = setInterval(() => {
+      setPct(prev => {
+        if (prev >= 95) return 95; // Hold at 95% until done
+        // Fast start, slow finish
+        const increment = prev < 50 ? 4 : prev < 80 ? 2 : 0.5;
+        return Math.min(95, prev + increment);
+      });
+    }, 200);
+    return () => clearInterval(interval);
+  }, []);
+
+  return (
+    <div style={{ marginBottom: 16 }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 4 }}>
+        <span style={{ fontSize: 10, color: c.text.secondary }}>Training neural network...</span>
+        <span style={{ fontSize: 10, color: c.text.secondary }}>{Math.round(pct)}%</span>
+      </div>
+      <div style={{ height: 6, background: c.bg.tertiary, borderRadius: 3, overflow: 'hidden' }}>
+        <div style={{
+          height: '100%',
+          width: `${pct}%`,
+          background: c.accent.primary,
+          borderRadius: 3,
+          transition: 'width 0.2s',
+        }} />
+      </div>
     </div>
   );
 }

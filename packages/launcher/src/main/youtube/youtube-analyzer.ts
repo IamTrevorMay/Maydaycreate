@@ -67,6 +67,11 @@ export class YouTubeAnalyzer {
 
   cancelAnalysis(id: string): void {
     this.pipeline.cancel(id);
+    // If no pipeline is running (stale/interrupted), update DB status directly
+    const analysis = this.db.getAnalysis(id);
+    if (analysis && !['complete', 'cancelled'].includes(analysis.status)) {
+      this.db.updateAnalysisStatus(id, 'cancelled');
+    }
   }
 
   pauseAnalysis(id: string): void {
@@ -76,13 +81,42 @@ export class YouTubeAnalyzer {
   async resumeAnalysis(id: string, options?: AnalysisOptions): Promise<void> {
     const analysis = this.db.getAnalysis(id);
     if (!analysis) throw new Error('Analysis not found');
-    if (analysis.status !== 'paused') throw new Error('Analysis is not paused');
 
-    this.pipeline.resume(id, analysis.url, (progress) => {
-      for (const cb of this.progressListeners) cb(progress);
-    }, options).then(() => {
-      this.tryProcessQueue();
-    });
+    // Allow resuming from stale active statuses (interrupted by app restart/error)
+    const resumableStatuses = ['paused', 'downloading', 'extracting', 'analyzing', 'error'];
+    if (!resumableStatuses.includes(analysis.status)) {
+      throw new Error(`Analysis cannot be resumed (status: ${analysis.status})`);
+    }
+
+    const pauseIndex = this.db.getPauseFrameIndex(id);
+    const frames = this.db.getFrames(id);
+    const canResume = frames.length >= 2;
+
+    console.log(`[Analyzer] resumeAnalysis id=${id} status=${analysis.status} pauseIndex=${pauseIndex} frames=${frames.length} canResume=${canResume}`);
+
+    if (canResume) {
+      // Has frames: use pipeline resume (picks up from where it left off)
+      // If no pause checkpoint, start analysis from frame 0
+      const resumeIndex = pauseIndex ?? 0;
+      this.db.pauseAnalysis(id, resumeIndex);
+      this.pipeline.resume(id, analysis.url, (progress) => {
+        for (const cb of this.progressListeners) cb(progress);
+      }, options).then(() => {
+        this.tryProcessQueue();
+      }).catch((err) => {
+        console.error('[Analyzer] resume failed:', err);
+      });
+    } else {
+      // No checkpoint or not enough frames: restart from scratch with same ID
+      this.db.resetAnalysisData(id);
+      this.pipeline.run(id, analysis.url, (progress) => {
+        for (const cb of this.progressListeners) cb(progress);
+      }, options).then(() => {
+        this.tryProcessQueue();
+      }).catch((err) => {
+        console.error('[Analyzer] restart failed:', err);
+      });
+    }
   }
 
   getAnalysis(id: string): VideoAnalysis | null {

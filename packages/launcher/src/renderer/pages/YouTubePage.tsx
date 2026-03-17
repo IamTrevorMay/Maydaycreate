@@ -24,7 +24,6 @@ export function YouTubePage(): React.ReactElement {
   const [selectedEffect, setSelectedEffect] = useState<DetectedEffect | null>(null);
   const [activeCategories, setActiveCategories] = useState<Set<EffectCategory>>(new Set());
   const [viewMode, setViewMode] = useState<'timeline' | 'list'>('timeline');
-  const [skipCuts, setSkipCuts] = useState(true);
   const [toast, setToast] = useState<string | null>(null);
   const prevAnalysisIdRef = useRef<string | null>(null);
   const yt = useYouTube();
@@ -162,65 +161,46 @@ export function YouTubePage(): React.ReactElement {
         ))}
       </div>
 
-      {/* Persistent control bar for Analyze tab */}
-      {tab === 'analyze' && (
+      {/* Persistent control bar for Analyze tab — mini progress + pause */}
+      {tab === 'analyze' && yt.progress && (isAnalyzing || isPaused) && (
         <div style={{
           display: 'flex',
-          justifyContent: 'space-between',
+          justifyContent: 'flex-end',
           alignItems: 'center',
           padding: '8px 20px',
           background: c.bg.elevated,
           borderBottom: `1px solid ${c.border.default}`,
           flexShrink: 0,
         }}>
-          {/* Left: Skip Cuts */}
-          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-            <label style={{ display: 'flex', alignItems: 'center', gap: 5, cursor: 'pointer' }}>
-              <input
-                type="checkbox"
-                checked={skipCuts}
-                onChange={(e) => setSkipCuts(e.target.checked)}
-                style={{ accentColor: c.accent.primary }}
-              />
-              <span style={{ color: c.text.primary, fontSize: 12, fontWeight: 600 }}>Skip Cuts</span>
-            </label>
-            <span style={{ color: c.text.disabled, fontSize: 10 }}>
-              Ignore simple cuts during analysis
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+            <span style={{ color: c.text.secondary, fontSize: 11 }}>
+              {yt.progress.detail}
             </span>
+            <span style={{
+              color: isPaused ? '#fbbf24' : c.accent.primary,
+              fontSize: 11,
+              fontWeight: 600,
+            }}>
+              {Math.round(yt.progress.percent)}%
+            </span>
+            {!isPaused && (
+              <button
+                onClick={() => yt.pauseAnalysis(yt.progress!.analysisId)}
+                style={{
+                  padding: '4px 14px',
+                  background: '#fbbf24',
+                  border: 'none',
+                  color: '#000',
+                  borderRadius: 4,
+                  fontSize: 11,
+                  fontWeight: 700,
+                  cursor: 'pointer',
+                }}
+              >
+                PAUSE
+              </button>
+            )}
           </div>
-
-          {/* Right: analysis progress + PAUSE when active */}
-          {yt.progress && (isAnalyzing || isPaused) && (
-            <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-              <span style={{ color: c.text.secondary, fontSize: 11 }}>
-                {yt.progress.detail}
-              </span>
-              <span style={{
-                color: isPaused ? '#fbbf24' : c.accent.primary,
-                fontSize: 11,
-                fontWeight: 600,
-              }}>
-                {Math.round(yt.progress.percent)}%
-              </span>
-              {!isPaused && (
-                <button
-                  onClick={() => yt.pauseAnalysis(yt.progress!.analysisId)}
-                  style={{
-                    padding: '4px 14px',
-                    background: '#fbbf24',
-                    border: 'none',
-                    color: '#000',
-                    borderRadius: 4,
-                    fontSize: 11,
-                    fontWeight: 700,
-                    cursor: 'pointer',
-                  }}
-                >
-                  PAUSE
-                </button>
-              )}
-            </div>
-          )}
         </div>
       )}
 
@@ -232,8 +212,180 @@ export function YouTubePage(): React.ReactElement {
               onAnalyze={yt.startAnalysis}
               onAddToQueue={yt.addToQueue}
               loading={yt.loading}
-              skipCuts={skipCuts}
             />
+
+            {/* In Progress section — paused, active, queued, error analyses */}
+            {(() => {
+              const incomplete = yt.analyses.filter(a =>
+                ['paused', 'queued', 'downloading', 'extracting', 'analyzing', 'error'].includes(a.status)
+              );
+              if (incomplete.length === 0) return null;
+
+              const STATUS_BADGE: Record<string, { label: string; bg: string; fg: string }> = {
+                paused: { label: 'Paused', bg: '#fbbf2433', fg: '#fbbf24' },
+                queued: { label: 'Queued', bg: `${c.text.secondary}33`, fg: c.text.secondary },
+                downloading: { label: 'Downloading', bg: `${c.accent.primary}33`, fg: c.accent.primary },
+                extracting: { label: 'Extracting', bg: `${c.accent.primary}33`, fg: c.accent.primary },
+                analyzing: { label: 'Analyzing', bg: `${c.accent.primary}33`, fg: c.accent.primary },
+                error: { label: 'Error', bg: `${c.status.error}33`, fg: c.status.error },
+              };
+
+              return (
+                <div style={{ padding: '0 20px 12px' }}>
+                  <div style={{ fontSize: 12, fontWeight: 600, color: c.text.primary, marginBottom: 8 }}>
+                    In Progress ({incomplete.length})
+                  </div>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                    {incomplete.map(a => {
+                      const badge = STATUS_BADGE[a.status] || STATUS_BADGE.queued;
+                      const liveProgress = yt.progress?.analysisId === a.id ? yt.progress : null;
+                      const isActive = ['downloading', 'extracting', 'analyzing'].includes(a.status);
+
+                      // Progress calculation
+                      let progressFrames = a.pauseFrameIndex ?? a.effectCount;
+                      let totalFrames = a.frameCount;
+                      let progressPct = 0;
+
+                      if (liveProgress && isActive) {
+                        progressPct = Math.min(liveProgress.percent, 100);
+                      } else if (totalFrames > 0) {
+                        progressPct = Math.min((progressFrames / totalFrames) * 100, 100);
+                      }
+
+                      const thumbSrc = a.thumbnailPath
+                        ? `mayday-frame://${a.thumbnailPath}`
+                        : a.thumbnailUrl || '';
+
+                      return (
+                        <div
+                          key={a.id}
+                          style={{
+                            display: 'flex',
+                            alignItems: 'center',
+                            gap: 10,
+                            padding: '8px 10px',
+                            background: c.bg.elevated,
+                            border: `1px solid ${c.border.default}`,
+                            borderRadius: 6,
+                          }}
+                        >
+                          {/* Thumbnail */}
+                          {thumbSrc && (
+                            <img
+                              src={thumbSrc}
+                              alt=""
+                              style={{ width: 64, height: 36, objectFit: 'cover', borderRadius: 4, flexShrink: 0 }}
+                            />
+                          )}
+
+                          {/* Info */}
+                          <div style={{ flex: 1, minWidth: 0 }}>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 3 }}>
+                              <span style={{
+                                color: c.text.primary,
+                                fontSize: 11,
+                                fontWeight: 600,
+                                overflow: 'hidden',
+                                textOverflow: 'ellipsis',
+                                whiteSpace: 'nowrap',
+                              }}>
+                                {a.title}
+                              </span>
+                              <span style={{
+                                padding: '1px 6px',
+                                borderRadius: 3,
+                                fontSize: 9,
+                                fontWeight: 700,
+                                background: badge.bg,
+                                color: badge.fg,
+                                flexShrink: 0,
+                              }}>
+                                {badge.label}
+                              </span>
+                            </div>
+                            <div style={{ color: c.text.secondary, fontSize: 10, marginBottom: 4 }}>
+                              {a.channel}
+                              {totalFrames > 0 && (
+                                <span> &middot; {liveProgress && isActive
+                                  ? liveProgress.detail
+                                  : `${progressFrames} / ${totalFrames} frames`
+                                }</span>
+                              )}
+                            </div>
+                            {/* Progress bar */}
+                            <div style={{ height: 3, background: c.bg.tertiary, borderRadius: 2, width: '100%' }}>
+                              <div style={{
+                                height: '100%',
+                                width: `${progressPct}%`,
+                                background: a.status === 'error' ? c.status.error : a.status === 'paused' ? '#fbbf24' : c.accent.primary,
+                                borderRadius: 2,
+                                transition: 'width 0.3s',
+                              }} />
+                            </div>
+                          </div>
+
+                          {/* Actions */}
+                          <div style={{ display: 'flex', gap: 6, flexShrink: 0 }}>
+                            {isActive && liveProgress ? (
+                              <button
+                                onClick={() => yt.openAnalysis(a.id)}
+                                style={{
+                                  padding: '4px 10px',
+                                  background: c.bg.tertiary,
+                                  color: c.text.primary,
+                                  border: `1px solid ${c.border.default}`,
+                                  borderRadius: 4,
+                                  fontSize: 10,
+                                  fontWeight: 600,
+                                  cursor: 'pointer',
+                                }}
+                              >
+                                View
+                              </button>
+                            ) : (
+                              <button
+                                onClick={() => yt.resumeAnalysis(a.id)}
+                                style={{
+                                  padding: '4px 10px',
+                                  background: c.accent.primary,
+                                  color: '#fff',
+                                  border: 'none',
+                                  borderRadius: 4,
+                                  fontSize: 10,
+                                  fontWeight: 700,
+                                  cursor: 'pointer',
+                                }}
+                              >
+                                {a.status === 'error' ? 'Retry' : 'Continue'}
+                              </button>
+                            )}
+                            <button
+                              onClick={async () => {
+                                if (confirm(`Cancel analysis "${a.title}"?`)) {
+                                  await yt.cancelAnalysis(a.id);
+                                  await yt.refreshLibrary();
+                                }
+                              }}
+                              style={{
+                                padding: '4px 8px',
+                                background: 'transparent',
+                                color: c.text.disabled,
+                                border: `1px solid ${c.border.default}`,
+                                borderRadius: 4,
+                                fontSize: 10,
+                                cursor: 'pointer',
+                              }}
+                            >
+                              Cancel
+                            </button>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              );
+            })()}
 
             {/* Unrated analyses banner */}
             {(() => {
@@ -286,7 +438,7 @@ export function YouTubePage(): React.ReactElement {
                 progress={yt.progress}
                 onCancel={() => yt.cancelAnalysis(yt.progress!.analysisId)}
                 onPause={() => yt.pauseAnalysis(yt.progress!.analysisId)}
-                onResume={(options) => yt.resumeAnalysis(yt.progress!.analysisId, options)}
+                onResume={() => yt.resumeAnalysis(yt.progress!.analysisId)}
               />
             )}
 

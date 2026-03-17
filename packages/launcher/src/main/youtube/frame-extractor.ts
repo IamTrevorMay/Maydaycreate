@@ -5,7 +5,9 @@ import { randomUUID } from 'crypto';
 import type { ExtractedFrame } from '@mayday/types';
 
 const SCENE_THRESHOLD = 0.3;
-const GAP_FILL_INTERVAL = 1; // 1 fps for gaps > 3s
+const GAP_FILL_INTERVAL_HIGH = 0.5;    // high scene density > 0.5 scenes/sec
+const GAP_FILL_INTERVAL_DEFAULT = 1;   // normal density
+const GAP_FILL_INTERVAL_LOW = 2;       // low scene density < 0.1 scenes/sec
 const MAX_GAP_SECONDS = 3;
 const FRAME_WIDTH = 1280;
 const THUMB_WIDTH = 320;
@@ -128,6 +130,17 @@ export class FrameExtractor {
     return scenes.sort((a, b) => a.timestamp - b.timestamp);
   }
 
+  private computeSceneDensity(sceneFrames: SceneFrame[], centerTime: number): number {
+    const windowHalf = 5; // 10s rolling window
+    const windowStart = Math.max(0, centerTime - windowHalf);
+    const windowEnd = centerTime + windowHalf;
+    const windowDuration = windowEnd - windowStart;
+    if (windowDuration <= 0) return 0;
+
+    const count = sceneFrames.filter(sf => sf.timestamp >= windowStart && sf.timestamp <= windowEnd).length;
+    return count / windowDuration;
+  }
+
   private fillGaps(
     sceneFrames: SceneFrame[],
     duration: number,
@@ -139,7 +152,7 @@ export class FrameExtractor {
       result.push({ timestamp: sf.timestamp, score: sf.score, method: 'scene-detect' });
     }
 
-    // Fill gaps > MAX_GAP_SECONDS
+    // Fill gaps > MAX_GAP_SECONDS with adaptive intervals
     const timestamps = sceneFrames.map(f => f.timestamp);
     timestamps.push(duration); // add end
 
@@ -149,10 +162,22 @@ export class FrameExtractor {
       const gap = end - start;
 
       if (gap > MAX_GAP_SECONDS) {
-        const fillCount = Math.floor(gap / GAP_FILL_INTERVAL) - 1;
-        for (let j = 1; j <= fillCount && j * GAP_FILL_INTERVAL + start < end; j++) {
+        const midpoint = (start + end) / 2;
+        const density = this.computeSceneDensity(sceneFrames, midpoint);
+
+        let interval: number;
+        if (density > 0.5) {
+          interval = GAP_FILL_INTERVAL_HIGH;
+        } else if (density < 0.1) {
+          interval = GAP_FILL_INTERVAL_LOW;
+        } else {
+          interval = GAP_FILL_INTERVAL_DEFAULT;
+        }
+
+        const fillCount = Math.floor(gap / interval) - 1;
+        for (let j = 1; j <= fillCount && j * interval + start < end; j++) {
           result.push({
-            timestamp: start + j * GAP_FILL_INTERVAL,
+            timestamp: start + j * interval,
             score: null,
             method: 'interval',
           });

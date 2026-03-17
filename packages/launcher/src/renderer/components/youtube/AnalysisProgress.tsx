@@ -1,6 +1,6 @@
-import React, { useState } from 'react';
+import React from 'react';
 import { c } from '../../styles.js';
-import type { AnalysisProgress as ProgressType, AnalysisOptions } from '@mayday/types';
+import type { AnalysisProgress as ProgressType } from '@mayday/types';
 
 const PHASES = ['downloading', 'extracting', 'analyzing', 'complete'] as const;
 const PHASE_LABELS: Record<string, string> = {
@@ -15,11 +15,10 @@ interface AnalysisProgressProps {
   progress: ProgressType;
   onCancel: () => void;
   onPause?: () => void;
-  onResume?: (options?: AnalysisOptions) => void;
+  onResume?: () => void;
 }
 
 export function AnalysisProgress({ progress, onCancel, onPause, onResume }: AnalysisProgressProps): React.ReactElement {
-  const [skipCuts, setSkipCuts] = useState(true);
   const isPaused = progress.status === 'paused';
   const isTerminal = progress.status === 'complete' || progress.status === 'error' || progress.status === 'cancelled';
   const isRunning = !isTerminal && !isPaused;
@@ -104,32 +103,21 @@ export function AnalysisProgress({ progress, onCancel, onPause, onResume }: Anal
             </button>
           )}
           {isPaused && onResume && (
-            <>
-              <label style={{ display: 'flex', alignItems: 'center', gap: 4, cursor: 'pointer' }}>
-                <input
-                  type="checkbox"
-                  checked={skipCuts}
-                  onChange={(e) => setSkipCuts(e.target.checked)}
-                  style={{ accentColor: c.accent.primary }}
-                />
-                <span style={{ color: c.text.secondary, fontSize: 11 }}>Skip Cuts</span>
-              </label>
-              <button
-                onClick={() => onResume({ skipCuts })}
-                style={{
-                  padding: '4px 12px',
-                  background: c.accent.primary,
-                  border: 'none',
-                  color: '#fff',
-                  borderRadius: 4,
-                  fontSize: 11,
-                  fontWeight: 600,
-                  cursor: 'pointer',
-                }}
-              >
-                Resume
-              </button>
-            </>
+            <button
+              onClick={() => onResume()}
+              style={{
+                padding: '4px 12px',
+                background: c.accent.primary,
+                border: 'none',
+                color: '#fff',
+                borderRadius: 4,
+                fontSize: 11,
+                fontWeight: 600,
+                cursor: 'pointer',
+              }}
+            >
+              Resume
+            </button>
           )}
           {(isRunning || isPaused) && (
             <button

@@ -186,7 +186,7 @@ export class AnalysisPipeline {
           const result = await this.vision.analyzeFramePair(
             frameBefore.filePath,
             frameAfter.filePath,
-            { videoTitle, timestamp: frameBefore.timestamp, previousEffects: detectedDescriptions.slice(-5), skipCuts: options?.skipCuts },
+            { videoTitle, timestamp: frameBefore.timestamp, previousEffects: detectedDescriptions.slice(-5) },
           );
 
           if (result.effects.length === 0) {
@@ -265,6 +265,9 @@ export class AnalysisPipeline {
       } catch (err) {
         console.error('[Pipeline] Style analysis failed:', err);
       }
+
+      // Deduplicate overlapping same-category effects
+      this.deduplicateEffects(analysisId);
 
       // Complete
       const elapsed = Date.now() - startTime;
@@ -421,7 +424,7 @@ export class AnalysisPipeline {
           const result = await this.vision.analyzeFramePair(
             frameBefore.filePath,
             frameAfter.filePath,
-            { videoTitle, timestamp: frameBefore.timestamp, previousEffects: detectedDescriptions.slice(-5), skipCuts: options?.skipCuts },
+            { videoTitle, timestamp: frameBefore.timestamp, previousEffects: detectedDescriptions.slice(-5) },
           );
 
           if (result.effects.length === 0) {
@@ -499,6 +502,9 @@ export class AnalysisPipeline {
         console.error('[Pipeline:resume] Style analysis failed:', err);
       }
 
+      // Deduplicate overlapping same-category effects
+      this.deduplicateEffects(analysisId);
+
       // Complete
       const elapsed = Date.now() - startTime;
       this.db.completeAnalysis(analysisId, summary, styleNotes, elapsed);
@@ -515,6 +521,35 @@ export class AnalysisPipeline {
     } finally {
       this.abortControllers.delete(analysisId);
       this.progressCallbacks.delete(analysisId);
+    }
+  }
+
+  private deduplicateEffects(analysisId: string): void {
+    const effects = this.db.getEffects(analysisId);
+    if (effects.length < 2) return;
+
+    const toDelete: string[] = [];
+    let current = effects[0];
+
+    for (let i = 1; i < effects.length; i++) {
+      const next = effects[i];
+      if (next.category === current.category && next.startTime <= current.endTime) {
+        // Merge: extend current, combine descriptions, take highest confidence
+        const newEnd = Math.max(current.endTime, next.endTime);
+        const newDesc = current.description + '; ' + next.description;
+        const newConf = confidenceRank(next.confidence) > confidenceRank(current.confidence)
+          ? next.confidence : current.confidence;
+        this.db.updateEffectMerge(current.id, newEnd, newDesc, newConf);
+        current = { ...current, endTime: newEnd, description: newDesc, confidence: newConf };
+        toDelete.push(next.id);
+      } else {
+        current = next;
+      }
+    }
+
+    if (toDelete.length > 0) {
+      this.db.deleteEffects(toDelete);
+      console.log(`[Pipeline] Dedup: merged ${toDelete.length} overlapping effects`);
     }
   }
 
@@ -552,4 +587,10 @@ export class AnalysisPipeline {
     }
     return samples;
   }
+}
+
+function confidenceRank(level: string): number {
+  if (level === 'high') return 3;
+  if (level === 'medium') return 2;
+  return 1;
 }

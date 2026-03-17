@@ -6,7 +6,7 @@
   "main": "dist/index.js",
   "scripts": {
     "build": "tsup src/index.ts --format esm --splitting --external esbuild",
-    "dev": "tsx watch src/index.ts"
+    "dev": "tsx watch --exclude '**/.mayday-build/**' src/index.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.78.0",

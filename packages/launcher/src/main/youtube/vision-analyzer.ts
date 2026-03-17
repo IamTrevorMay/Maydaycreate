@@ -15,9 +15,8 @@ const require = createRequire(import.meta.url);
 const Anthropic = require('@anthropic-ai/sdk').default as typeof import('@anthropic-ai/sdk').default;
 
 const EFFECT_CATEGORIES: EffectCategory[] = [
-  'cut', 'transition', 'color-grade', 'text-overlay', 'blur', 'scale',
-  'opacity', 'speed-ramp', 'mask', 'composite', 'audio-visual',
-  'motion-graphics', 'stabilization', 'lens-effect', 'other',
+  'transition', 'color-grade', 'transform', 'overlay',
+  'compositing', 'speed-ramp', 'lens-effect', 'other',
 ];
 
 interface FramePairResult {
@@ -45,12 +44,12 @@ export class VisionAnalyzer {
   async analyzeFramePair(
     frameBeforePath: string,
     frameAfterPath: string,
-    context: { videoTitle: string; timestamp: number; previousEffects: string[]; skipCuts?: boolean },
+    context: { videoTitle: string; timestamp: number; previousEffects: string[] },
   ): Promise<FramePairResult> {
     const beforeData = fs.readFileSync(frameBeforePath);
     const afterData = fs.readFileSync(frameAfterPath);
 
-    const systemPrompt = this.buildSystemPrompt(undefined, context.skipCuts);
+    const systemPrompt = this.buildSystemPrompt();
 
     const response = await this.client.messages.create({
       model: 'claude-sonnet-4-6',
@@ -72,7 +71,7 @@ Return a JSON object with this exact structure:
 {
   "effects": [
     {
-      "category": "one of: ${(context.skipCuts ? EFFECT_CATEGORIES.filter(c => c !== 'cut') : EFFECT_CATEGORIES).join(', ')}",
+      "category": "one of: ${EFFECT_CATEGORIES.join(', ')}",
       "secondaryCategories": [],
       "description": "what changed and how",
       "confidence": "high|medium|low",
@@ -86,7 +85,7 @@ Return a JSON object with this exact structure:
   ]
 }
 
-If the frames show no significant editing change (just natural motion), return {"effects": []}.`,
+If the frames show no significant editing change (just natural motion or a hard cut), return {"effects": []}.`,
             },
             {
               type: 'image',
@@ -110,14 +109,7 @@ If the frames show no significant editing change (just natural motion), return {
     });
 
     const text = response.content.find(b => b.type === 'text')?.text || '{"effects":[]}';
-    const result = this.parseResponse(text);
-
-    // Safety filter: strip cuts if skipCuts is enabled
-    if (context.skipCuts) {
-      result.effects = result.effects.filter(e => e.category !== 'cut');
-    }
-
-    return result;
+    return this.parseResponse(text);
   }
 
   async analyzeOverallStyle(
@@ -172,34 +164,41 @@ Return JSON:
     }
   }
 
-  private buildSystemPrompt(corrections?: TrainingCorrection[], skipCuts?: boolean): string {
-    const categories = skipCuts ? EFFECT_CATEGORIES.filter(c => c !== 'cut') : EFFECT_CATEGORIES;
-    let prompt = `You are an expert video editor analyzing frames to reverse-engineer editing techniques.
+  private buildSystemPrompt(corrections?: TrainingCorrection[]): string {
+    let prompt = `You are an expert Premiere Pro editor analyzing consecutive video frames to reverse-engineer editing techniques applied on the timeline.
 
 Your job:
-1. Compare before/after frames and identify visual changes caused by editing
-2. Categorize each effect using these categories: ${categories.join(', ')}
+1. Compare before/after frames and identify visual changes caused by deliberate editing
+2. Categorize each effect into one of these categories: ${EFFECT_CATEGORIES.join(', ')}
 3. Rate your confidence: high (obvious effect), medium (likely effect), low (uncertain)
 4. Provide step-by-step Premiere Pro recreation instructions
 5. List suggested Premiere Pro effects and estimated parameter values
 6. Flag uncertainties explicitly
 7. Return structured JSON only — no markdown fences, no extra text
 
+Category definitions (reference Premiere Pro panels and effects):
+- transition: Cross Dissolve, Dip to Black, Film Dissolve, wipe transitions, morph cuts — anything in the Video Transitions panel
+- color-grade: Lumetri Color adjustments, LUT applications, RGB Curves, HSL Secondary, color wheels, exposure/contrast shifts
+- transform: Motion panel keyframes — Scale, Position, Rotation, Anchor Point, Opacity keyframes (linear, bezier, ease in/out)
+- overlay: Pre-assembled titles, lower thirds, logos, watermarks, or graphics placed on the timeline (Essential Graphics panel items). All complex visual objects (animated text, infographics, motion graphics) were assembled outside Premiere and placed as a single asset — do NOT break them into sub-components
+- compositing: Ultra Key, blend modes, track mattes, masking (pen tool / shape masks), nested sequences used for compositing
+- speed-ramp: Time Remapping keyframes, speed/duration changes, freeze frames
+- lens-effect: Gaussian Blur, Camera Blur, Warp Stabilizer, vignette, lens distortion effects
+- other: Any editing effect that does not fit the above categories
+
+CRITICAL: Do NOT report hard cuts (straight scene changes with no transition effect). If a frame pair is simply a different scene with no creative transition, return {"effects": []}. Hard cuts are not editing effects — they are the absence of a transition.
+
 Distinguish between:
-- Actual editing effects (cuts, transitions, color changes, overlays)
-- Natural motion/camera movement (not an editing effect)
-- Scene changes with no transition (hard cuts)
+- Deliberate editing effects (transitions, color grades, overlays, compositing)
+- Natural motion or camera movement (NOT an editing effect)
+- Hard cuts / scene changes with no transition (NOT an editing effect)
 
-Be specific about Premiere Pro effect names and parameters.`;
-
-    if (skipCuts) {
-      prompt += `\n\nIMPORTANT: Do NOT report simple hard cuts (straight scene changes with no transition effect). Only report effects that involve creative editing techniques — transitions, color grades, overlays, etc. If a frame pair is just a hard cut between scenes, return {"effects": []}.`;
-    }
+Be specific about Premiere Pro effect names and parameters. Reference keyframe types (linear, bezier, ease in/out) where applicable.`;
 
     if (corrections && corrections.length > 0) {
       prompt += '\n\nPast corrections to learn from:\n';
-      for (const c of corrections.slice(0, 10)) {
-        prompt += `- Original: "${c.originalDescription}" (${c.originalCategory}) → Correction: "${c.correctionNote}"${c.correctedCategory ? ` (should be: ${c.correctedCategory})` : ''}\n`;
+      for (const corr of corrections.slice(0, 10)) {
+        prompt += `- Original: "${corr.originalDescription}" (${corr.originalCategory}) → Correction: "${corr.correctionNote}"${corr.correctedCategory ? ` (should be: ${corr.correctedCategory})` : ''}\n`;
       }
     }
 

@@ -1,18 +1,17 @@
 import React, { useState } from 'react';
 import { c } from '../../styles.js';
 import { useIpc } from '../../hooks/useIpc.js';
-import type { YouTubeVideoInfo, AnalysisOptions } from '@mayday/types';
+import type { YouTubeVideoInfo } from '@mayday/types';
 
 const YT_REGEX = /^(https?:\/\/)?(www\.)?(youtube\.com\/(watch\?v=|shorts\/)|youtu\.be\/)[\w-]+/;
 
 interface VideoInputProps {
-  onAnalyze: (url: string, options?: AnalysisOptions) => void;
+  onAnalyze: (url: string) => void;
   onAddToQueue: (url: string, title?: string) => void;
   loading: boolean;
-  skipCuts: boolean;
 }
 
-export function VideoInput({ onAnalyze, onAddToQueue, loading, skipCuts }: VideoInputProps): React.ReactElement {
+export function VideoInput({ onAnalyze, onAddToQueue, loading }: VideoInputProps): React.ReactElement {
   const ipc = useIpc();
   const [url, setUrl] = useState('');
   const [info, setInfo] = useState<YouTubeVideoInfo | null>(null);
@@ -114,7 +113,7 @@ export function VideoInput({ onAnalyze, onAddToQueue, loading, skipCuts }: Video
             </div>
             <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
               <button
-                onClick={() => onAnalyze(url.trim(), { skipCuts })}
+                onClick={() => onAnalyze(url.trim())}
                 disabled={loading}
                 style={{
                   padding: '8px 20px',

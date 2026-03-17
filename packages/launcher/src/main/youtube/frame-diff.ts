@@ -2,7 +2,14 @@ import { execFile } from 'child_process';
 import type { ExtractedFrame } from '@mayday/types';
 
 const PRE_FILTER_THRESHOLD = 0.05;
+const LOW_LUMA_THRESHOLD = 16;
+const HIGH_LUMA_THRESHOLD = 240;
 const CONCURRENCY_LIMIT = 4;
+
+function isLowComplexityPair(lumaBefore: number, lumaAfter: number): boolean {
+  return (lumaBefore <= LOW_LUMA_THRESHOLD && lumaAfter <= LOW_LUMA_THRESHOLD)
+    || (lumaBefore >= HIGH_LUMA_THRESHOLD && lumaAfter >= HIGH_LUMA_THRESHOLD);
+}
 
 function ffmpegPath(): string {
   return 'ffmpeg';
@@ -54,7 +61,7 @@ export interface FrameDiffFeatures {
   isInterval: number;
   positionInVideo: number;
   recentEffectDensity: number;
-  recentCutFraction: number;
+  recentTransitionFraction: number;
 }
 
 function parsePsnr(output: string): number {
@@ -166,7 +173,7 @@ export class FrameDiffAnalyzer {
       chromaUDelta,
       chromaVDelta,
       visualDiffScore,
-      shouldSkip: visualDiffScore < PRE_FILTER_THRESHOLD,
+      shouldSkip: visualDiffScore < PRE_FILTER_THRESHOLD || isLowComplexityPair(statsBefore.yavg, statsAfter.yavg),
     };
   }
 
@@ -224,8 +231,8 @@ export class FrameDiffAnalyzer {
 
     const last10 = recentEffects.slice(-10);
     const recentEffectDensity = Math.min(last10.length / 10, 1);
-    const recentCutFraction = last10.length > 0
-      ? last10.filter(e => e.category === 'cut').length / last10.length
+    const recentTransitionFraction = last10.length > 0
+      ? last10.filter(e => e.category === 'transition').length / last10.length
       : 0;
 
     return {
@@ -240,7 +247,7 @@ export class FrameDiffAnalyzer {
       isInterval,
       positionInVideo,
       recentEffectDensity,
-      recentCutFraction,
+      recentTransitionFraction,
     };
   }
 
@@ -257,7 +264,7 @@ export class FrameDiffAnalyzer {
       features.isInterval,
       features.positionInVideo,
       features.recentEffectDensity,
-      features.recentCutFraction,
+      features.recentTransitionFraction,
     ];
   }
 }

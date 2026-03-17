@@ -11,13 +11,17 @@ export function useCuttingBoard() {
 
   const refresh = useCallback(async () => {
     try {
-      const [s, r] = await Promise.all([
-        ipc.cuttingBoard.getAggregateStats(),
-        ipc.cuttingBoard.getTrainingRuns(),
-      ]);
+      const s = await ipc.cuttingBoard.getAggregateStats();
       setStats(s);
+    } catch (err) {
+      console.error('[CuttingBoard] getAggregateStats error:', err);
+    }
+    try {
+      const r = await ipc.cuttingBoard.getTrainingRuns();
       setTrainingRuns(r);
-    } catch {}
+    } catch (err) {
+      console.error('[CuttingBoard] getTrainingRuns error:', err);
+    }
   }, [ipc]);
 
   useEffect(() => {
@@ -29,7 +33,17 @@ export function useCuttingBoard() {
   const trainModel = useCallback(async () => {
     setTraining(true);
     try {
-      await ipc.cuttingBoard.trainModel();
+      const result = await ipc.cuttingBoard.trainModel();
+      // If training returned a result with version/accuracy, use it to update trainingRuns immediately
+      if (result && result.version != null) {
+        setTrainingRuns(prev => [{
+          id: result.version,
+          trainedAt: Date.now(),
+          trainingSize: result.trainingSize,
+          accuracy: result.accuracy,
+          version: result.version,
+        }, ...prev]);
+      }
       await refresh();
     } finally {
       setTraining(false);

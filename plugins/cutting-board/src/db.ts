@@ -299,7 +299,16 @@ export class CuttingBoardDB {
 
   getAllForTraining(): CutRecord[] {
     return this.db.prepare(`
-      SELECT cr.*, s.sequence_name
+      SELECT
+        cr.id, cr.session_id AS sessionId, cr.edit_type AS editType,
+        cr.edit_point_time AS editPointTime, cr.clip_name AS clipName,
+        cr.media_path AS mediaPath, cr.track_index AS trackIndex,
+        cr.track_type AS trackType, cr.before_state AS beforeState,
+        cr.after_state AS afterState, cr.audio_category AS audioCategory,
+        cr.rating, cr.voice_transcript AS voiceTranscript, cr.notes,
+        cr.is_undo AS isUndo, cr.detected_at AS detectedAt,
+        cr.feedback_at AS feedbackAt, cr.boosted,
+        s.sequence_name AS sequenceName
       FROM cut_records cr
       JOIN sessions s ON cr.session_id = s.id
       WHERE cr.is_undo = 0
@@ -309,7 +318,16 @@ export class CuttingBoardDB {
 
   getQualityRecords(): Array<CutRecord & { quality: string; weight: number }> {
     const records = this.db.prepare(`
-      SELECT cr.*, s.sequence_name
+      SELECT
+        cr.id, cr.session_id AS sessionId, cr.edit_type AS editType,
+        cr.edit_point_time AS editPointTime, cr.clip_name AS clipName,
+        cr.media_path AS mediaPath, cr.track_index AS trackIndex,
+        cr.track_type AS trackType, cr.before_state AS beforeState,
+        cr.after_state AS afterState, cr.audio_category AS audioCategory,
+        cr.rating, cr.voice_transcript AS voiceTranscript, cr.notes,
+        cr.is_undo AS isUndo, cr.detected_at AS detectedAt,
+        cr.feedback_at AS feedbackAt, cr.boosted,
+        s.sequence_name AS sequenceName
       FROM cut_records cr
       JOIN sessions s ON cr.session_id = s.id
       WHERE cr.is_undo = 0

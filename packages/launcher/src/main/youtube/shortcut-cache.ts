@@ -4,13 +4,12 @@ import path from 'path';
 import type { EffectCategory } from '@mayday/types';
 
 const EFFECT_CATEGORIES: Array<EffectCategory | 'no-effect'> = [
-  'cut', 'transition', 'color-grade', 'text-overlay', 'blur', 'scale',
-  'opacity', 'speed-ramp', 'mask', 'composite', 'audio-visual',
-  'motion-graphics', 'stabilization', 'lens-effect', 'other', 'no-effect',
+  'transition', 'color-grade', 'transform', 'overlay',
+  'compositing', 'speed-ramp', 'lens-effect', 'other', 'no-effect',
 ];
 
 const CONFIDENCE_THRESHOLD = 0.85;
-const SIMPLE_CATEGORIES: Set<string> = new Set(['cut']);
+const SIMPLE_CATEGORIES: Set<string> = new Set(['transition']);
 const MIN_TRAINING_EXAMPLES = 50;
 
 export interface ShortcutPrediction {

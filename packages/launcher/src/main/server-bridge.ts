@@ -13,6 +13,8 @@ export interface ServerBridge {
   getStatus(): ServerStatus;
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   lifecycle: any;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  eventBus: any;
 }
 
 let _bridge: ServerBridge | null = null;
@@ -98,6 +100,7 @@ export async function startEmbeddedServer(opts: {
   _bridge = {
     getStatus: makeStatus,
     lifecycle: serverInstance.lifecycle,
+    eventBus: serverInstance.eventBus,
   };
 
   emitStatus();
