@@ -6392,42 +6392,119 @@ var EXCALIBUR_DIR = (0, import_path.join)(
 );
 var CMDLIST_PATH = (0, import_path.join)(EXCALIBUR_DIR, ".cmdlist.json");
 var SHORTCUTS_PATH = (0, import_path.join)(EXCALIBUR_DIR, ".shortcuts.json");
-var CATEGORY_LABELS = {
-  us: "User Commands",
-  cl: "Clip",
-  sq: "Sequence",
-  sl: "Selection",
-  ex: "Export",
-  pr: "Project",
-  pf: "Preferences",
-  sp: "Special",
-  vf: "Video Effects",
-  af: "Audio Effects",
-  vp: "Video Presets",
-  ap: "Audio Presets",
-  vt: "Video Transitions",
-  at: "Audio Transitions"
-};
+var AUTO_SHORTCUT_KEYS = [
+  "1",
+  "2",
+  "3",
+  "4",
+  "5",
+  "6",
+  "7",
+  "8",
+  "9",
+  "0",
+  "q",
+  "w",
+  "e",
+  "r",
+  "y",
+  "u",
+  "p",
+  "g",
+  "h",
+  "k",
+  "l",
+  "z",
+  "x",
+  "b",
+  "n"
+];
+function readShortcuts() {
+  try {
+    if (!(0, import_fs.existsSync)(SHORTCUTS_PATH))
+      return {};
+    return JSON.parse((0, import_fs.readFileSync)(SHORTCUTS_PATH, "utf-8"));
+  } catch {
+    return {};
+  }
+}
+function writeShortcuts(shortcuts) {
+  try {
+    (0, import_fs.writeFileSync)(SHORTCUTS_PATH, JSON.stringify(shortcuts), "utf-8");
+    plugin_default.logger.info("Updated Excalibur shortcuts file");
+  } catch (err) {
+    plugin_default.logger.error("Failed to write shortcuts:", err);
+  }
+}
+function ensureShortcuts() {
+  try {
+    if (!(0, import_fs.existsSync)(CMDLIST_PATH))
+      return;
+    const cmdlist = JSON.parse((0, import_fs.readFileSync)(CMDLIST_PATH, "utf-8"));
+    const shortcuts = readShortcuts();
+    const userEntries = cmdlist["us"] ?? {};
+    const userNames = Object.keys(userEntries).filter(
+      (name) => userEntries[name].show === 1
+    );
+    const usedKeys = /* @__PURE__ */ new Set();
+    for (const val of Object.values(shortcuts)) {
+      if (typeof val === "string") {
+        const dotIdx = val.indexOf(".");
+        const key = dotIdx === -1 ? val : val.slice(0, dotIdx);
+        if (typeof val === "string" && val.includes("ctrl") && val.includes("alt") && val.includes("m")) {
+          usedKeys.add(key);
+        }
+      }
+    }
+    let dirty = false;
+    let keyIdx = 0;
+    for (const name of userNames) {
+      if (shortcuts[name])
+        continue;
+      while (keyIdx < AUTO_SHORTCUT_KEYS.length && usedKeys.has(AUTO_SHORTCUT_KEYS[keyIdx])) {
+        keyIdx++;
+      }
+      if (keyIdx >= AUTO_SHORTCUT_KEYS.length) {
+        plugin_default.logger.warn(`Ran out of auto-shortcut keys at command "${name}"`);
+        break;
+      }
+      const key = AUTO_SHORTCUT_KEYS[keyIdx];
+      shortcuts[name] = `${key}.m_alt_ctrl`;
+      usedKeys.add(key);
+      keyIdx++;
+      dirty = true;
+      plugin_default.logger.info(`Auto-assigned shortcut Ctrl+Shift+Option+${key.toUpperCase()} to "${name}"`);
+    }
+    if (dirty) {
+      writeShortcuts(shortcuts);
+    }
+  } catch (err) {
+    plugin_default.logger.error("ensureShortcuts failed:", err);
+  }
+}
 function readExcaliburCommands() {
   try {
-    const cmdlistRaw = (0, import_fs.existsSync)(CMDLIST_PATH) ? (0, import_fs.readFileSync)(CMDLIST_PATH, "utf-8") : "{}";
+    if (!(0, import_fs.existsSync)(CMDLIST_PATH))
+      return [];
+    const cmdlistRaw = (0, import_fs.readFileSync)(CMDLIST_PATH, "utf-8");
     const shortcutsRaw = (0, import_fs.existsSync)(SHORTCUTS_PATH) ? (0, import_fs.readFileSync)(SHORTCUTS_PATH, "utf-8") : "{}";
     const cmdlist = JSON.parse(cmdlistRaw);
     const shortcuts = JSON.parse(shortcutsRaw);
     const commands = [];
-    for (const [cat, entries] of Object.entries(cmdlist)) {
-      const categoryLabel = CATEGORY_LABELS[cat] ?? cat;
-      for (const [name, cmd] of Object.entries(entries)) {
-        if (cmd.show !== 1)
-          continue;
-        commands.push({
-          id: `${cat}:${name}`,
-          name,
-          category: cat,
-          categoryLabel,
-          shortcut: parseShortcut(shortcuts[name])
-        });
-      }
+    const userEntries = cmdlist["us"] ?? {};
+    for (const [name, cmd] of Object.entries(userEntries)) {
+      if (cmd.show !== 1)
+        continue;
+      const shortcut = parseShortcut(shortcuts[name]);
+      if (!shortcut)
+        continue;
+      commands.push({
+        id: `us:${name}`,
+        name,
+        category: "us",
+        categoryLabel: "User Commands",
+        shortcut
+      });
     }
     return commands;
   } catch (err) {
@@ -6483,6 +6560,7 @@ function simulateKeystroke(key, modifiers) {
   });
 }
 var ExcaliburCommandAction = class extends SingletonAction {
+  manifestId = "com.mayday.excalibur.command";
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   onWillAppear(ev) {
     const settings2 = ev.payload.settings;
@@ -6495,7 +6573,7 @@ var ExcaliburCommandAction = class extends SingletonAction {
     const settings2 = ev.payload.settings;
     if (!settings2.shortcutKey) {
       plugin_default.logger.warn(
-        `No shortcut for command "${settings2.commandName}" \u2014 assign one in Excalibur Settings`
+        `No shortcut for command "${settings2.commandName}"`
       );
       await ev.action.showAlert();
       return;
@@ -6518,16 +6596,19 @@ var ExcaliburCommandAction = class extends SingletonAction {
   onSendToPlugin(ev) {
     const payload = ev.payload;
     if (payload.event === "getCommands") {
+      ensureShortcuts();
       const commands = readExcaliburCommands();
-      ev.action.sendToPropertyInspector({ event: "commands", commands });
+      plugin_default.ui.sendToPropertyInspector({ event: "commands", commands });
     }
   }
 };
 plugin_default.actions.registerAction(new ExcaliburCommandAction());
+ensureShortcuts();
 for (const filePath of [CMDLIST_PATH, SHORTCUTS_PATH]) {
   if ((0, import_fs.existsSync)(filePath)) {
-    (0, import_fs.watchFile)(filePath, { interval: 5e3 }, () => {
+    watchFile(filePath, { interval: 5e3 }, () => {
       plugin_default.logger.info(`Excalibur file changed: ${filePath}`);
+      ensureShortcuts();
     });
   }
 }

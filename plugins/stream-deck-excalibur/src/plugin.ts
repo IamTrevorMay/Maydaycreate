@@ -1,5 +1,5 @@
 import streamDeck, { SingletonAction } from '@elgato/streamdeck';
-import { readFileSync, watchFile, existsSync } from 'fs';
+import { readFileSync, writeFileSync, existsSync } from 'fs';
 import { join } from 'path';
 import { homedir } from 'os';
 import { exec } from 'child_process';
@@ -35,36 +35,114 @@ interface ExcaliburCommand {
   name: string;
   category: string;
   categoryLabel: string;
-  shortcut: { key: string; modifiers: string[] } | null;
+  shortcut: { key: string; modifiers: string[] };
 }
 
-// Category labels for the dropdown groups
-const CATEGORY_LABELS: Record<string, string> = {
-  us: 'User Commands',
-  cl: 'Clip',
-  sq: 'Sequence',
-  sl: 'Selection',
-  ex: 'Export',
-  pr: 'Project',
-  pf: 'Preferences',
-  sp: 'Special',
-  vf: 'Video Effects',
-  af: 'Audio Effects',
-  vp: 'Video Presets',
-  ap: 'Audio Presets',
-  vt: 'Video Transitions',
-  at: 'Audio Transitions',
-};
+// Auto-assigned shortcut keys: Ctrl+Shift+Option + key
+// These obscure combos won't conflict with normal Premiere shortcuts
+const AUTO_SHORTCUT_KEYS = [
+  '1', '2', '3', '4', '5', '6', '7', '8', '9', '0',
+  'q', 'w', 'e', 'r', 'y', 'u', 'p',
+  'g', 'h', 'k', 'l',
+  'z', 'x', 'b', 'n',
+];
 
 // ---------------------------------------------------------------------------
-// Read Excalibur files
+// Read & auto-assign shortcuts
+// ---------------------------------------------------------------------------
+
+function readShortcuts(): Record<string, string | { a?: string; v?: string }> {
+  try {
+    if (!existsSync(SHORTCUTS_PATH)) return {};
+    return JSON.parse(readFileSync(SHORTCUTS_PATH, 'utf-8'));
+  } catch {
+    return {};
+  }
+}
+
+function writeShortcuts(shortcuts: Record<string, string | { a?: string; v?: string }>): void {
+  try {
+    writeFileSync(SHORTCUTS_PATH, JSON.stringify(shortcuts), 'utf-8');
+    streamDeck.logger.info('Updated Excalibur shortcuts file');
+  } catch (err) {
+    streamDeck.logger.error('Failed to write shortcuts:', err);
+  }
+}
+
+/**
+ * Ensure every visible user command has a shortcut assigned.
+ * Auto-assigns Ctrl+Shift+Option+key for commands without one.
+ */
+function ensureShortcuts(): void {
+  try {
+    if (!existsSync(CMDLIST_PATH)) return;
+
+    const cmdlist = JSON.parse(readFileSync(CMDLIST_PATH, 'utf-8')) as Record<
+      string,
+      Record<string, { show?: number }>
+    >;
+    const shortcuts = readShortcuts();
+
+    const userEntries = cmdlist['us'] ?? {};
+    const userNames = Object.keys(userEntries).filter(
+      (name) => userEntries[name].show === 1,
+    );
+
+    // Find which keys are already in use
+    const usedKeys = new Set<string>();
+    for (const val of Object.values(shortcuts)) {
+      if (typeof val === 'string') {
+        const dotIdx = val.indexOf('.');
+        const key = dotIdx === -1 ? val : val.slice(0, dotIdx);
+        // Only track keys that use our modifier combo
+        if (typeof val === 'string' && val.includes('ctrl') && val.includes('alt') && val.includes('m')) {
+          usedKeys.add(key);
+        }
+      }
+    }
+
+    let dirty = false;
+    let keyIdx = 0;
+
+    for (const name of userNames) {
+      if (shortcuts[name]) continue; // already has a shortcut
+
+      // Find next available key
+      while (keyIdx < AUTO_SHORTCUT_KEYS.length && usedKeys.has(AUTO_SHORTCUT_KEYS[keyIdx])) {
+        keyIdx++;
+      }
+      if (keyIdx >= AUTO_SHORTCUT_KEYS.length) {
+        streamDeck.logger.warn(`Ran out of auto-shortcut keys at command "${name}"`);
+        break;
+      }
+
+      const key = AUTO_SHORTCUT_KEYS[keyIdx];
+      // Excalibur format: "key.mod1_mod2" where m=shift
+      shortcuts[name] = `${key}.m_alt_ctrl`;
+      usedKeys.add(key);
+      keyIdx++;
+      dirty = true;
+
+      streamDeck.logger.info(`Auto-assigned shortcut Ctrl+Shift+Option+${key.toUpperCase()} to "${name}"`);
+    }
+
+    if (dirty) {
+      writeShortcuts(shortcuts);
+    }
+  } catch (err) {
+    streamDeck.logger.error('ensureShortcuts failed:', err);
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Read commands (with guaranteed shortcuts)
 // ---------------------------------------------------------------------------
 
 function readExcaliburCommands(): ExcaliburCommand[] {
   try {
-    const cmdlistRaw = existsSync(CMDLIST_PATH)
-      ? readFileSync(CMDLIST_PATH, 'utf-8')
-      : '{}';
+    if (!existsSync(CMDLIST_PATH)) return [];
+
+    const cmdlistRaw = readFileSync(CMDLIST_PATH, 'utf-8');
     const shortcutsRaw = existsSync(SHORTCUTS_PATH)
       ? readFileSync(SHORTCUTS_PATH, 'utf-8')
       : '{}';
@@ -80,20 +158,20 @@ function readExcaliburCommands(): ExcaliburCommand[] {
 
     const commands: ExcaliburCommand[] = [];
 
-    for (const [cat, entries] of Object.entries(cmdlist)) {
-      const categoryLabel = CATEGORY_LABELS[cat] ?? cat;
+    const userEntries = cmdlist['us'] ?? {};
+    for (const [name, cmd] of Object.entries(userEntries)) {
+      if (cmd.show !== 1) continue;
 
-      for (const [name, cmd] of Object.entries(entries)) {
-        if (cmd.show !== 1) continue;
+      const shortcut = parseShortcut(shortcuts[name]);
+      if (!shortcut) continue; // shouldn't happen after ensureShortcuts
 
-        commands.push({
-          id: `${cat}:${name}`,
-          name,
-          category: cat,
-          categoryLabel,
-          shortcut: parseShortcut(shortcuts[name]),
-        });
-      }
+      commands.push({
+        id: `us:${name}`,
+        name,
+        category: 'us',
+        categoryLabel: 'User Commands',
+        shortcut,
+      });
     }
 
     return commands;
@@ -109,7 +187,6 @@ function parseShortcut(
   if (!raw) return null;
 
   if (typeof raw === 'string') {
-    // Format: "key" or "key.mod1_mod2"
     const dotIdx = raw.indexOf('.');
     if (dotIdx === -1) {
       return raw ? { key: raw, modifiers: [] } : null;
@@ -170,6 +247,8 @@ function simulateKeystroke(key: string, modifiers: string[]): void {
 // ---------------------------------------------------------------------------
 
 class ExcaliburCommandAction extends SingletonAction {
+  override readonly manifestId = 'com.mayday.excalibur.command';
+
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   override onWillAppear(ev: any): void {
     const settings = ev.payload.settings as CommandSettings;
@@ -184,7 +263,7 @@ class ExcaliburCommandAction extends SingletonAction {
 
     if (!settings.shortcutKey) {
       streamDeck.logger.warn(
-        `No shortcut for command "${settings.commandName}" — assign one in Excalibur Settings`,
+        `No shortcut for command "${settings.commandName}"`,
       );
       await ev.action.showAlert();
       return;
@@ -211,8 +290,10 @@ class ExcaliburCommandAction extends SingletonAction {
     const payload = ev.payload as { event?: string };
 
     if (payload.event === 'getCommands') {
+      // Ensure shortcuts exist before sending command list
+      ensureShortcuts();
       const commands = readExcaliburCommands();
-      ev.action.sendToPropertyInspector({ event: 'commands', commands });
+      streamDeck.ui.sendToPropertyInspector({ event: 'commands', commands });
     }
   }
 }
@@ -223,12 +304,15 @@ class ExcaliburCommandAction extends SingletonAction {
 
 streamDeck.actions.registerAction(new ExcaliburCommandAction());
 
-// Watch Excalibur files for changes — no action needed here,
-// the PI re-fetches on open. This just logs for debugging.
+// Auto-assign shortcuts on startup
+ensureShortcuts();
+
+// Re-check when Excalibur files change (new commands added)
 for (const filePath of [CMDLIST_PATH, SHORTCUTS_PATH]) {
   if (existsSync(filePath)) {
     watchFile(filePath, { interval: 5000 }, () => {
       streamDeck.logger.info(`Excalibur file changed: ${filePath}`);
+      ensureShortcuts();
     });
   }
 }

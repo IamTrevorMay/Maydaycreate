@@ -22,7 +22,7 @@
   "Description": "Trigger Excalibur commands from your Stream Deck. Select a user command and the keyboard shortcut is sent automatically.",
   "Icon": "imgs/plugin-icon",
   "Name": "Excalibur",
-  "Version": "1.0.0",
+  "Version": "1.1.0",
   "OS": [
     { "Platform": "mac", "MinimumVersion": "10.15" },
     { "Platform": "windows", "MinimumVersion": "10" }
