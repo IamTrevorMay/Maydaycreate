@@ -10,7 +10,8 @@ import { SyncStatusBar } from './components/SyncStatusBar.js';
 import { ServerStatusIndicator } from './components/ServerStatusIndicator.js';
 import { useSyncStatus } from './hooks/useSyncStatus.js';
 import { useIpc } from './hooks/useIpc.js';
-import type { ServerStatus } from '@mayday/types';
+import { useAnalysisProgress } from './hooks/useAnalysisProgress.js';
+import type { ServerStatus, AnalysisProgress as AnalysisProgressType } from '@mayday/types';
 import { c } from './styles.js';
 
 type Page = 'dashboard' | 'sync' | 'conflicts' | 'history' | 'installer' | 'youtube' | 'settings';
@@ -26,6 +27,7 @@ export default function App(): React.ReactElement {
   const { status, runSync } = useSyncStatus();
   const ipc = useIpc();
   const [serverStatus, setServerStatus] = useState<ServerStatus | null>(null);
+  const analysisProgress = useAnalysisProgress();
 
   // Poll server status on mount and subscribe to push updates
   useEffect(() => {
@@ -98,6 +100,9 @@ export default function App(): React.ReactElement {
               onClick={() => setPage(item.id)}
             />
           ))}
+          {page !== 'youtube' && analysisProgress && analysisProgress.status !== 'complete' && analysisProgress.status !== 'error' && analysisProgress.status !== 'cancelled' && (
+            <MiniAnalysisIndicator progress={analysisProgress} onClick={() => setPage('youtube')} />
+          )}
         </nav>
 
         {/* Content area */}
@@ -112,6 +117,60 @@ export default function App(): React.ReactElement {
         </main>
       </div>
     </div>
+  );
+}
+
+function MiniAnalysisIndicator({ progress, onClick }: { progress: AnalysisProgressType; onClick: () => void }): React.ReactElement {
+  const isPaused = progress.status === 'paused';
+  const dotColor = isPaused ? c.status.warning : c.accent.primary;
+
+  return (
+    <button
+      onClick={onClick}
+      style={{
+        marginTop: 'auto',
+        padding: '8px 12px',
+        background: c.bg.elevated,
+        border: 'none',
+        borderTop: `1px solid ${c.border.default}`,
+        cursor: 'pointer',
+        width: '100%',
+        textAlign: 'left',
+      }}
+    >
+      {/* Progress bar */}
+      <div style={{
+        height: 3,
+        background: c.bg.tertiary,
+        borderRadius: 2,
+        overflow: 'hidden',
+        marginBottom: 6,
+      }}>
+        <div style={{
+          height: '100%',
+          width: `${progress.percent}%`,
+          background: isPaused ? c.status.warning : c.accent.primary,
+          borderRadius: 2,
+          transition: 'width 0.3s',
+        }} />
+      </div>
+      {/* Status line */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+        <span style={{
+          width: 6,
+          height: 6,
+          borderRadius: '50%',
+          background: dotColor,
+          display: 'inline-block',
+          flexShrink: 0,
+          animation: isPaused ? 'none' : 'pulse 1.5s ease-in-out infinite',
+        }} />
+        <span style={{ color: c.text.secondary, fontSize: 10, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+          {isPaused ? 'Paused' : progress.phase} {progress.percent > 0 ? `${progress.percent}%` : ''}
+        </span>
+      </div>
+      <style>{`@keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.4; } }`}</style>
+    </button>
   );
 }
 

@@ -1,7 +1,7 @@
 import { ipcMain } from 'electron';
 import type { BrowserWindow } from 'electron';
 import type { YouTubeAnalyzer } from './youtube-analyzer.js';
-import type { ExportOptions } from '@mayday/types';
+import type { AnalysisOptions, ExportOptions } from '@mayday/types';
 
 export function registerYouTubeHandlers(analyzer: YouTubeAnalyzer, win: BrowserWindow): void {
   // Push progress events to renderer
@@ -15,12 +15,20 @@ export function registerYouTubeHandlers(analyzer: YouTubeAnalyzer, win: BrowserW
     return analyzer.getVideoInfo(url);
   });
 
-  ipcMain.handle('youtube:startAnalysis', async (_e, url: string) => {
-    return analyzer.startAnalysis(url);
+  ipcMain.handle('youtube:startAnalysis', async (_e, url: string, options?: AnalysisOptions) => {
+    return analyzer.startAnalysis(url, options);
   });
 
   ipcMain.handle('youtube:cancelAnalysis', (_e, id: string) => {
     analyzer.cancelAnalysis(id);
+  });
+
+  ipcMain.handle('youtube:pauseAnalysis', (_e, id: string) => {
+    analyzer.pauseAnalysis(id);
+  });
+
+  ipcMain.handle('youtube:resumeAnalysis', async (_e, id: string, options?: AnalysisOptions) => {
+    await analyzer.resumeAnalysis(id, options);
   });
 
   ipcMain.handle('youtube:getAnalysis', (_e, id: string) => {
@@ -73,5 +81,13 @@ export function registerYouTubeHandlers(analyzer: YouTubeAnalyzer, win: BrowserW
 
   ipcMain.handle('youtube:export', (_e, options: ExportOptions) => {
     return analyzer.exportAnalysis(options);
+  });
+
+  ipcMain.handle('youtube:trainShortcutModel', async () => {
+    return analyzer.trainShortcutModel();
+  });
+
+  ipcMain.handle('youtube:getShortcutModelStatus', () => {
+    return analyzer.getShortcutModelStatus();
   });
 }

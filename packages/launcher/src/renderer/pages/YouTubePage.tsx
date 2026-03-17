@@ -24,6 +24,7 @@ export function YouTubePage(): React.ReactElement {
   const yt = useYouTube();
 
   const isAnalyzing = yt.progress && yt.progress.status !== 'complete' && yt.progress.status !== 'error' && yt.progress.status !== 'cancelled';
+  const isPaused = yt.progress?.status === 'paused';
 
   return (
     <div style={{ height: '100%', display: 'flex', flexDirection: 'column' }}>
@@ -76,10 +77,12 @@ export function YouTubePage(): React.ReactElement {
               loading={yt.loading}
             />
 
-            {yt.progress && isAnalyzing && (
+            {yt.progress && (isAnalyzing || isPaused) && (
               <AnalysisProgress
                 progress={yt.progress}
                 onCancel={() => yt.cancelAnalysis(yt.progress!.analysisId)}
+                onPause={() => yt.pauseAnalysis(yt.progress!.analysisId)}
+                onResume={(options) => yt.resumeAnalysis(yt.progress!.analysisId, options)}
               />
             )}
 

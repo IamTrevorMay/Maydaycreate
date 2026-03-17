@@ -5,6 +5,7 @@ export type AnalysisStatus =
   | 'downloading'
   | 'extracting'
   | 'analyzing'
+  | 'paused'
   | 'complete'
   | 'error'
   | 'cancelled';
@@ -124,6 +125,7 @@ export interface DetectedEffect {
   correctionNote: string;
   sourceIdentification: string;
   savedPresetId: string | null;
+  source?: 'ai' | 'local';
 }
 
 export interface TrainingCorrection {
@@ -155,6 +157,10 @@ export interface BatchQueueItem {
   status: 'queued' | 'processing' | 'complete' | 'error';
   position: number;
   analysisId: string | null;
+}
+
+export interface AnalysisOptions {
+  skipCuts?: boolean;
 }
 
 export type ExportFormat = 'markdown' | 'json';

@@ -20,6 +20,7 @@ import type {
   TrainingStats,
   BatchQueueItem,
   AnalysisProgress,
+  AnalysisOptions,
   ExportOptions,
 } from '@mayday/types';
 
@@ -125,10 +126,14 @@ const mayday = {
   youtube: {
     getVideoInfo: (url: string): Promise<YouTubeVideoInfo> =>
       ipcRenderer.invoke('youtube:getVideoInfo', url),
-    startAnalysis: (url: string): Promise<string> =>
-      ipcRenderer.invoke('youtube:startAnalysis', url),
+    startAnalysis: (url: string, options?: AnalysisOptions): Promise<string> =>
+      ipcRenderer.invoke('youtube:startAnalysis', url, options),
     cancelAnalysis: (id: string): Promise<void> =>
       ipcRenderer.invoke('youtube:cancelAnalysis', id),
+    pauseAnalysis: (id: string): Promise<void> =>
+      ipcRenderer.invoke('youtube:pauseAnalysis', id),
+    resumeAnalysis: (id: string, options?: AnalysisOptions): Promise<void> =>
+      ipcRenderer.invoke('youtube:resumeAnalysis', id, options),
     getAnalysis: (id: string): Promise<VideoAnalysis | null> =>
       ipcRenderer.invoke('youtube:getAnalysis', id),
     listAnalyses: (): Promise<VideoAnalysisSummary[]> =>

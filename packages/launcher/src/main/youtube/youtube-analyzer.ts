@@ -3,6 +3,7 @@ import path from 'path';
 import fs from 'fs';
 import type {
   AnalysisProgress,
+  AnalysisOptions,
   VideoAnalysis,
   VideoAnalysisSummary,
   DetectedEffect,
@@ -17,6 +18,7 @@ import type {
 import { YouTubeDB } from './youtube-db.js';
 import { YtDlpService } from './ytdlp-service.js';
 import { AnalysisPipeline } from './analysis-pipeline.js';
+import { FrameDiffAnalyzer } from './frame-diff.js';
 import { randomUUID } from 'crypto';
 import { getServerBridge } from '../server-bridge.js';
 
@@ -37,7 +39,7 @@ export class YouTubeAnalyzer {
     const dataDir = path.join(app.getPath('userData'), 'youtube-analysis');
     this.db = new YouTubeDB(dataDir);
     this.ytdlp = new YtDlpService();
-    this.pipeline = new AnalysisPipeline(this.db);
+    this.pipeline = new AnalysisPipeline(this.db, dataDir);
   }
 
   // ── Video Info ───────────────────────────────────────────────────────────
@@ -48,14 +50,14 @@ export class YouTubeAnalyzer {
 
   // ── Analysis ────────────────────────────────────────────────────────────
 
-  async startAnalysis(url: string): Promise<string> {
+  async startAnalysis(url: string, options?: AnalysisOptions): Promise<string> {
     const info = await this.ytdlp.getVideoInfo(url);
     const analysisId = this.db.createAnalysis(info);
 
     // Run asynchronously
     this.pipeline.run(analysisId, url, (progress) => {
       for (const cb of this.progressListeners) cb(progress);
-    }).then(() => {
+    }, options).then(() => {
       // After completion, try processing queue
       this.tryProcessQueue();
     });
@@ -65,6 +67,22 @@ export class YouTubeAnalyzer {
 
   cancelAnalysis(id: string): void {
     this.pipeline.cancel(id);
+  }
+
+  pauseAnalysis(id: string): void {
+    this.pipeline.pause(id);
+  }
+
+  async resumeAnalysis(id: string, options?: AnalysisOptions): Promise<void> {
+    const analysis = this.db.getAnalysis(id);
+    if (!analysis) throw new Error('Analysis not found');
+    if (analysis.status !== 'paused') throw new Error('Analysis is not paused');
+
+    this.pipeline.resume(id, analysis.url, (progress) => {
+      for (const cb of this.progressListeners) cb(progress);
+    }, options).then(() => {
+      this.tryProcessQueue();
+    });
   }
 
   getAnalysis(id: string): VideoAnalysis | null {
@@ -120,6 +138,76 @@ export class YouTubeAnalyzer {
 
   getTrainingStats(): TrainingStats {
     return this.db.getTrainingStats();
+  }
+
+  // ── Shortcut Model ──────────────────────────────────────────────────
+
+  async trainShortcutModel(): Promise<{ accuracy: number; examples: number }> {
+    const frameDiff = new FrameDiffAnalyzer();
+    const shortcutCache = this.pipeline.getShortcutCache();
+
+    // Gather rated effects with corrections
+    const trainingEffects = this.db.getTrainingEffects();
+
+    // Gather no-effect pairs
+    const noEffectPairs = this.db.getNoEffectPairs();
+
+    const trainingData: Array<{ input: number[]; category: string }> = [];
+
+    // Process rated effects — compute visual diff features for each
+    for (const effect of trainingEffects) {
+      if (!fs.existsSync(effect.frameBefore) || !fs.existsSync(effect.frameAfter)) continue;
+
+      try {
+        const diff = await frameDiff.computePairDiff(effect.frameBefore, effect.frameAfter, 0, 1);
+        const analysis = this.db.getAnalysis(effect.analysisId);
+        const duration = analysis?.duration || 0;
+
+        // Build a minimal frame-like object for feature extraction
+        const features = frameDiff.extractFeatures(
+          diff,
+          { id: '', analysisId: effect.analysisId, frameIndex: 0, timestamp: effect.startTime, filePath: effect.frameBefore, thumbnailPath: '', method: 'scene-detect', sceneScore: 0 },
+          { id: '', analysisId: effect.analysisId, frameIndex: 1, timestamp: effect.endTime, filePath: effect.frameAfter, thumbnailPath: '', method: 'scene-detect', sceneScore: 0 },
+          duration,
+          [],
+        );
+
+        const category = effect.correctedCategory || effect.category;
+        trainingData.push({ input: frameDiff.featuresToVector(features), category });
+      } catch (err) {
+        console.error('[Analyzer] Failed to compute features for training effect:', err);
+      }
+    }
+
+    // Process no-effect pairs
+    for (const pair of noEffectPairs) {
+      if (!fs.existsSync(pair.frameBefore) || !fs.existsSync(pair.frameAfter)) continue;
+
+      try {
+        const diff = await frameDiff.computePairDiff(pair.frameBefore, pair.frameAfter, 0, 1);
+        const analysis = this.db.getAnalysis(pair.analysisId);
+        const duration = analysis?.duration || 0;
+
+        const features = frameDiff.extractFeatures(
+          diff,
+          { id: '', analysisId: pair.analysisId, frameIndex: 0, timestamp: pair.timestampBefore, filePath: pair.frameBefore, thumbnailPath: '', method: 'interval', sceneScore: 0 },
+          { id: '', analysisId: pair.analysisId, frameIndex: 1, timestamp: pair.timestampAfter, filePath: pair.frameAfter, thumbnailPath: '', method: 'interval', sceneScore: 0 },
+          duration,
+          [],
+        );
+
+        trainingData.push({ input: frameDiff.featuresToVector(features), category: 'no-effect' });
+      } catch (err) {
+        console.error('[Analyzer] Failed to compute features for no-effect pair:', err);
+      }
+    }
+
+    console.log(`[Analyzer] Training shortcut model with ${trainingData.length} examples (${trainingEffects.length} rated effects + ${noEffectPairs.length} no-effect pairs)`);
+    return shortcutCache.train(trainingData);
+  }
+
+  getShortcutModelStatus(): { ready: boolean; trained: boolean; accuracy: number; trainingExamples: number; modelPath: string } {
+    return this.pipeline.getShortcutCache().getStatus();
   }
 
   // ── Preset Integration ──────────────────────────────────────────────

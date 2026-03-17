@@ -121,6 +121,28 @@ export class YouTubeDB {
         ALTER TABLE corrections ADD COLUMN synced_at TEXT;
       `);
     }
+
+    // Migration: add pause_frame_index column for pause/resume
+    if (!cols.some(c => c.name === 'pause_frame_index')) {
+      this.db.exec(`ALTER TABLE analyses ADD COLUMN pause_frame_index INTEGER`);
+    }
+
+    // Migration: add source column to effects + no_effect_pairs table
+    const effectCols = this.db.prepare("PRAGMA table_info(effects)").all() as Array<{ name: string }>;
+    if (!effectCols.some(c => c.name === 'source')) {
+      this.db.exec(`ALTER TABLE effects ADD COLUMN source TEXT NOT NULL DEFAULT 'ai'`);
+    }
+    this.db.exec(`
+      CREATE TABLE IF NOT EXISTS no_effect_pairs (
+        id TEXT PRIMARY KEY,
+        analysis_id TEXT NOT NULL REFERENCES analyses(id) ON DELETE CASCADE,
+        frame_before TEXT NOT NULL,
+        frame_after TEXT NOT NULL,
+        timestamp_before REAL NOT NULL,
+        timestamp_after REAL NOT NULL,
+        created_at TEXT NOT NULL
+      );
+    `);
   }
 
   // ── Analyses ──────────────────────────────────────────────────────────────
@@ -160,6 +182,15 @@ export class YouTubeDB {
       UPDATE analyses SET status = 'complete', summary = ?, style_notes = ?, effect_count = ?, analysis_time_ms = ?, completed_at = ?
       WHERE id = ?
     `).run(summary, styleNotes, effectCount.count, analysisTimeMs, new Date().toISOString(), id);
+  }
+
+  pauseAnalysis(id: string, frameIndex: number): void {
+    this.db.prepare('UPDATE analyses SET status = ?, pause_frame_index = ? WHERE id = ?').run('paused', frameIndex, id);
+  }
+
+  getPauseFrameIndex(id: string): number | null {
+    const row = this.db.prepare('SELECT pause_frame_index FROM analyses WHERE id = ?').get(id) as { pause_frame_index: number | null } | undefined;
+    return row?.pause_frame_index ?? null;
   }
 
   getAnalysis(id: string): VideoAnalysis | null {
@@ -228,13 +259,14 @@ export class YouTubeDB {
 
   insertEffect(effect: DetectedEffect): void {
     this.db.prepare(`
-      INSERT INTO effects (id, analysis_id, effect_index, start_time, end_time, category, secondary_categories, description, confidence, frame_before, frame_after, premiere_recreation)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO effects (id, analysis_id, effect_index, start_time, end_time, category, secondary_categories, description, confidence, frame_before, frame_after, premiere_recreation, source)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       effect.id, effect.analysisId, effect.effectIndex, effect.startTime, effect.endTime,
       effect.category, JSON.stringify(effect.secondaryCategories), effect.description,
       effect.confidence, effect.frameBefore, effect.frameAfter,
       JSON.stringify(effect.premiereRecreation),
+      effect.source || 'ai',
     );
   }
 
@@ -306,6 +338,42 @@ export class YouTubeDB {
       corrections,
       accuracyPercent: rated > 0 ? Math.round((up / rated) * 100) : 0,
     };
+  }
+
+  // ── No-Effect Pairs ──────────────────────────────────────────────────
+
+  insertNoEffectPair(analysisId: string, frameBefore: string, frameAfter: string, timestampBefore: number, timestampAfter: number): void {
+    this.db.prepare(`
+      INSERT INTO no_effect_pairs (id, analysis_id, frame_before, frame_after, timestamp_before, timestamp_after, created_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?)
+    `).run(randomUUID(), analysisId, frameBefore, frameAfter, timestampBefore, timestampAfter, new Date().toISOString());
+  }
+
+  getNoEffectPairs(): Array<{ analysisId: string; frameBefore: string; frameAfter: string; timestampBefore: number; timestampAfter: number }> {
+    const rows = this.db.prepare('SELECT * FROM no_effect_pairs').all() as Record<string, unknown>[];
+    return rows.map(r => ({
+      analysisId: r.analysis_id as string,
+      frameBefore: r.frame_before as string,
+      frameAfter: r.frame_after as string,
+      timestampBefore: r.timestamp_before as number,
+      timestampAfter: r.timestamp_after as number,
+    }));
+  }
+
+  // ── Training Data ──────────────────────────────────────────────────
+
+  getTrainingEffects(): Array<DetectedEffect & { correctedCategory: string | null }> {
+    const rows = this.db.prepare(`
+      SELECT e.*, c.corrected_category
+      FROM effects e
+      LEFT JOIN corrections c ON c.effect_id = e.id
+      WHERE e.rating IS NOT NULL
+      ORDER BY e.start_time
+    `).all() as Record<string, unknown>[];
+    return rows.map(r => ({
+      ...this.mapEffect(r),
+      correctedCategory: (r.corrected_category as string) || null,
+    }));
   }
 
   // ── Queue ─────────────────────────────────────────────────────────────────
@@ -441,6 +509,7 @@ export class YouTubeDB {
       correctionNote: (r.correction_note as string) || '',
       sourceIdentification: (r.source_identification as string) || '',
       savedPresetId: (r.saved_preset_id as string) || null,
+      source: (r.source as 'ai' | 'local') || 'ai',
     };
   }
 }

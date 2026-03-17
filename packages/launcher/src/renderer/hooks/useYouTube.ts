@@ -6,6 +6,7 @@ import type {
   DetectedEffect,
   ExtractedFrame,
   AnalysisProgress,
+  AnalysisOptions,
   TrainingStats,
   BatchQueueItem,
   ExportOptions,
@@ -57,21 +58,30 @@ export function useYouTube() {
         refreshQueue();
         refreshStats();
       }
+      // Keep progress visible when paused (don't clear)
     });
 
     return unsub;
   }, [ipc, refreshLibrary, refreshQueue, refreshStats]);
 
-  const startAnalysis = useCallback(async (url: string) => {
+  const startAnalysis = useCallback(async (url: string, options?: AnalysisOptions) => {
     setLoading(true);
     try {
-      const id = await ipc.youtube.startAnalysis(url);
+      const id = await ipc.youtube.startAnalysis(url, options);
       await refreshLibrary();
       return id;
     } finally {
       setLoading(false);
     }
   }, [ipc, refreshLibrary]);
+
+  const pauseAnalysis = useCallback(async (id: string) => {
+    await ipc.youtube.pauseAnalysis(id);
+  }, [ipc]);
+
+  const resumeAnalysis = useCallback(async (id: string, options?: AnalysisOptions) => {
+    await ipc.youtube.resumeAnalysis(id, options);
+  }, [ipc]);
 
   const openAnalysis = useCallback(async (id: string) => {
     const [analysis, efx, frm] = await Promise.all([
@@ -155,6 +165,8 @@ export function useYouTube() {
     processQueue,
     deleteAnalysis,
     cancelAnalysis,
+    pauseAnalysis,
+    resumeAnalysis,
     exportAnalysis,
     refreshLibrary,
   };

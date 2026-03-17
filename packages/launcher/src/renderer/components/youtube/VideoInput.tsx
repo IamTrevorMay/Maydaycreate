@@ -1,12 +1,12 @@
 import React, { useState } from 'react';
 import { c } from '../../styles.js';
 import { useIpc } from '../../hooks/useIpc.js';
-import type { YouTubeVideoInfo } from '@mayday/types';
+import type { YouTubeVideoInfo, AnalysisOptions } from '@mayday/types';
 
 const YT_REGEX = /^(https?:\/\/)?(www\.)?(youtube\.com\/(watch\?v=|shorts\/)|youtu\.be\/)[\w-]+/;
 
 interface VideoInputProps {
-  onAnalyze: (url: string) => void;
+  onAnalyze: (url: string, options?: AnalysisOptions) => void;
   onAddToQueue: (url: string, title?: string) => void;
   loading: boolean;
 }
@@ -17,6 +17,7 @@ export function VideoInput({ onAnalyze, onAddToQueue, loading }: VideoInputProps
   const [info, setInfo] = useState<YouTubeVideoInfo | null>(null);
   const [fetching, setFetching] = useState(false);
   const [error, setError] = useState('');
+  const [skipCuts, setSkipCuts] = useState(true);
 
   const isValid = YT_REGEX.test(url.trim());
 
@@ -111,9 +112,9 @@ export function VideoInput({ onAnalyze, onAddToQueue, loading }: VideoInputProps
             <div style={{ color: c.text.secondary, fontSize: 12, marginBottom: 8 }}>
               {info.channel} &middot; {formatDuration(info.duration)} &middot; {info.resolution}
             </div>
-            <div style={{ display: 'flex', gap: 8 }}>
+            <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
               <button
-                onClick={() => onAnalyze(url.trim())}
+                onClick={() => onAnalyze(url.trim(), { skipCuts })}
                 disabled={loading}
                 style={{
                   padding: '8px 20px',
@@ -129,6 +130,15 @@ export function VideoInput({ onAnalyze, onAddToQueue, loading }: VideoInputProps
               >
                 {loading ? 'Starting...' : 'Analyze'}
               </button>
+              <label style={{ display: 'flex', alignItems: 'center', gap: 4, cursor: 'pointer' }}>
+                <input
+                  type="checkbox"
+                  checked={skipCuts}
+                  onChange={(e) => setSkipCuts(e.target.checked)}
+                  style={{ accentColor: c.accent.primary }}
+                />
+                <span style={{ color: c.text.secondary, fontSize: 11 }}>Skip Cuts</span>
+              </label>
               <button
                 onClick={() => onAddToQueue(url.trim(), info.title)}
                 style={{
