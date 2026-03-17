@@ -29,6 +29,10 @@ export class YouTubeAnalyzer {
   private progressListeners: ProgressCallback[] = [];
   private processingQueue = false;
 
+  get database(): YouTubeDB {
+    return this.db;
+  }
+
   constructor() {
     const dataDir = path.join(app.getPath('userData'), 'youtube-analysis');
     this.db = new YouTubeDB(dataDir);

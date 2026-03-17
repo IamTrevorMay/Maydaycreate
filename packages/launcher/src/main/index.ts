@@ -17,6 +17,7 @@ import { createTray } from './tray.js';
 import { SyncEngine } from '@mayday/sync-engine';
 import type { SyncSource } from '@mayday/sync-engine';
 import { YouTubeAnalyzer } from './youtube/youtube-analyzer.js';
+import { YouTubeSyncService } from './youtube/youtube-sync.js';
 
 // Augment PATH for Dock-launched apps (they don't inherit shell PATH)
 if (app.isPackaged) {
@@ -171,6 +172,16 @@ app.whenReady().then(async () => {
     machineId: config.machineId,
     machineName: config.machineName,
   });
+
+  // YouTube → Supabase sync
+  const ytSync = new YouTubeSyncService();
+  ytSync.initialize({
+    supabaseUrl: config.supabaseUrl,
+    supabaseAnonKey: config.supabaseAnonKey,
+    machineId: config.machineId,
+    machineName: config.machineName,
+  });
+  ytSync.startPeriodicSync(youtubeAnalyzer.database);
 
   // If sync source is configured, start a sync
   if (config.syncSourcePath) {

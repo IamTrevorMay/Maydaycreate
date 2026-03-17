@@ -111,6 +111,16 @@ export class YouTubeDB {
         analysis_id TEXT
       );
     `);
+
+    // Migration: add synced_at columns for Supabase sync
+    const cols = this.db.prepare("PRAGMA table_info(analyses)").all() as Array<{ name: string }>;
+    if (!cols.some(c => c.name === 'synced_at')) {
+      this.db.exec(`
+        ALTER TABLE analyses ADD COLUMN synced_at TEXT;
+        ALTER TABLE effects ADD COLUMN synced_at TEXT;
+        ALTER TABLE corrections ADD COLUMN synced_at TEXT;
+      `);
+    }
   }
 
   // ── Analyses ──────────────────────────────────────────────────────────────
@@ -342,6 +352,36 @@ export class YouTubeDB {
 
   removeFromQueue(id: string): void {
     this.db.prepare('DELETE FROM batch_queue WHERE id = ?').run(id);
+  }
+
+  // ── Sync ─────────────────────────────────────────────────────────────────
+
+  getUnsyncedAnalyses(): Record<string, unknown>[] {
+    return this.db.prepare(
+      "SELECT * FROM analyses WHERE status = 'complete' AND synced_at IS NULL"
+    ).all() as Record<string, unknown>[];
+  }
+
+  getUnsyncedEffects(limit = 500): Record<string, unknown>[] {
+    return this.db.prepare(
+      'SELECT * FROM effects WHERE synced_at IS NULL LIMIT ?'
+    ).all(limit) as Record<string, unknown>[];
+  }
+
+  getUnsyncedCorrections(): Record<string, unknown>[] {
+    return this.db.prepare(
+      'SELECT * FROM corrections WHERE synced_at IS NULL'
+    ).all() as Record<string, unknown>[];
+  }
+
+  markSynced(table: 'analyses' | 'effects' | 'corrections', ids: string[]): void {
+    if (ids.length === 0) return;
+    const now = new Date().toISOString();
+    const stmt = this.db.prepare(`UPDATE ${table} SET synced_at = ? WHERE id = ?`);
+    const tx = this.db.transaction((items: string[]) => {
+      for (const id of items) stmt.run(now, id);
+    });
+    tx(ids);
   }
 
   // ── Helpers ───────────────────────────────────────────────────────────────

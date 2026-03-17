@@ -58,12 +58,22 @@ function shouldIgnore(
   return false;
 }
 
+/** Size threshold above which we defer hashing and use mtime+size instead */
+const LAZY_HASH_THRESHOLD = 5 * 1024 * 1024; // 5 MB
+
 /**
  * Compute SHA-256 hash of a file's contents.
  */
 export function hashFile(filePath: string): string {
   const contents = fs.readFileSync(filePath);
   return crypto.createHash('sha256').update(contents).digest('hex');
+}
+
+/**
+ * Produce a fast fingerprint from mtime + size (no I/O beyond stat).
+ */
+function fastFingerprint(mtime: number, size: number): string {
+  return `mtime:${Math.floor(mtime)}:${size}`;
 }
 
 export interface ScanOptions {
@@ -97,11 +107,13 @@ export function scanDirectory(
     } else if (entry.isFile()) {
       if (shouldIgnore(entry.name, opts?.exclude, opts?.include)) continue;
       const stat = fs.statSync(abs);
+      // For large files, defer hashing — use mtime+size fingerprint instead
+      const useHash = stat.size <= LAZY_HASH_THRESHOLD;
       results.push({
         relativePath: path.relative(base, abs),
         absolutePath: abs,
         mtime: stat.mtimeMs,
-        hash: hashFile(abs),
+        hash: useHash ? hashFile(abs) : fastFingerprint(stat.mtimeMs, stat.size),
         size: stat.size,
       });
     }

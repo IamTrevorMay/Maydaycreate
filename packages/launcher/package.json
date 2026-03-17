@@ -20,7 +20,10 @@
     "electron-store": "^8.1.0",
     "uuid": "^9.0.0",
     "yt-dlp-wrap": "^2.3.12",
-    "@anthropic-ai/sdk": "^0.39.0"
+    "@supabase/supabase-js": "^2.99.2",
+    "@anthropic-ai/sdk": "^0.78.0",
+    "brain.js": "^2.0.0-beta.23",
+    "gpu.js": "^2.16.0"
   },
   "devDependencies": {
     "@electron-toolkit/preload": "^3.0.0",

@@ -241,6 +241,35 @@ export default definePlugin({
       }
     }));
 
+    // Auto-start capture when a sequence is available
+    const tryAutoStart = async () => {
+      if (pollTimer) return; // already capturing
+      try {
+        const seq = await ctx.services.timeline.getActiveSequence();
+        if (seq && db) {
+          currentSessionId = db.createSession(seq.sequenceId, seq.name);
+          editCount = 0;
+          previousSnapshot = null;
+          snapshotHistory = [];
+          pollTimer = setInterval(() => pollTimeline(ctx), POLL_INTERVAL);
+          ctx.log.info(`Auto-started capture on "${seq.name}" (session ${currentSessionId})`);
+        }
+      } catch {
+        // No sequence yet — will retry
+      }
+    };
+
+    // Try immediately, then retry every 5s until a sequence is found
+    await tryAutoStart();
+    if (!pollTimer) {
+      const retryTimer = setInterval(async () => {
+        await tryAutoStart();
+        if (pollTimer) clearInterval(retryTimer);
+      }, 5000);
+      // Clean up retry timer on deactivate
+      eventSubs.push({ unsubscribe: () => clearInterval(retryTimer) });
+    }
+
     ctx.log.info('Cutting Board activated');
   },
 

@@ -26,5 +26,8 @@
   },
   "engines": {
     "node": ">=20"
+  },
+  "overrides": {
+    "gl": "npm:empty-npm-package@1.0.0"
   }
 }
