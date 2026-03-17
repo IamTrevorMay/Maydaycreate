@@ -2273,7 +2273,7 @@ var require_websocket = __commonJS({
     "use strict";
     var EventEmitter2 = require("events");
     var https = require("https");
-    var http = require("http");
+    var http2 = require("http");
     var net = require("net");
     var tls = require("tls");
     var { randomBytes, createHash } = require("crypto");
@@ -2824,7 +2824,7 @@ var require_websocket = __commonJS({
       }
       const defaultPort = isSecure ? 443 : 80;
       const key = randomBytes(16).toString("base64");
-      const request = isSecure ? https.request : http.request;
+      const request = isSecure ? https.request : http2.request;
       const protocolSet = /* @__PURE__ */ new Set();
       let perMessageDeflate;
       opts.createConnection = opts.createConnection || (isSecure ? tlsConnect : netConnect);
@@ -3341,7 +3341,7 @@ var require_websocket_server = __commonJS({
   "../../node_modules/ws/lib/websocket-server.js"(exports2, module2) {
     "use strict";
     var EventEmitter2 = require("events");
-    var http = require("http");
+    var http2 = require("http");
     var { Duplex } = require("stream");
     var { createHash } = require("crypto");
     var extension = require_extension();
@@ -3416,8 +3416,8 @@ var require_websocket_server = __commonJS({
           );
         }
         if (options.port != null) {
-          this._server = http.createServer((req, res) => {
-            const body = http.STATUS_CODES[426];
+          this._server = http2.createServer((req, res) => {
+            const body = http2.STATUS_CODES[426];
             res.writeHead(426, {
               "Content-Length": body.length,
               "Content-Type": "text/plain"
@@ -3713,7 +3713,7 @@ var require_websocket_server = __commonJS({
       this.destroy();
     }
     function abortHandshake(socket, code, message, headers) {
-      message = message || http.STATUS_CODES[code];
+      message = message || http2.STATUS_CODES[code];
       headers = {
         Connection: "close",
         "Content-Type": "text/html",
@@ -3722,7 +3722,7 @@ var require_websocket_server = __commonJS({
       };
       socket.once("finish", socket.destroy);
       socket.end(
-        `HTTP/1.1 ${code} ${http.STATUS_CODES[code]}\r
+        `HTTP/1.1 ${code} ${http2.STATUS_CODES[code]}\r
 ` + Object.keys(headers).map((h) => `${h}: ${headers[h]}`).join("\r\n") + "\r\n\r\n" + message
       );
     }
@@ -3952,8 +3952,8 @@ function freeze(value) {
     Object.values(value).forEach(freeze);
   }
 }
-function get(source, path5) {
-  const props = path5.split(".");
+function get(source, path6) {
+  const props = path6.split(".");
   return props.reduce((obj, prop) => obj && obj[prop], source);
 }
 
@@ -5016,12 +5016,12 @@ var ActionEvent = class extends ActionWithoutPayloadEvent {
 var import_node_fs2 = require("node:fs");
 var import_node_path4 = require("node:path");
 var manifest = new Lazy(() => {
-  const path5 = (0, import_node_path4.join)(process.cwd(), "manifest.json");
-  if (!(0, import_node_fs2.existsSync)(path5)) {
+  const path6 = (0, import_node_path4.join)(process.cwd(), "manifest.json");
+  if (!(0, import_node_fs2.existsSync)(path6)) {
     throw new Error("Failed to read manifest.json as the file does not exist.");
   }
   try {
-    return JSON.parse((0, import_node_fs2.readFileSync)(path5, {
+    return JSON.parse((0, import_node_fs2.readFileSync)(path6, {
       encoding: "utf-8",
       flag: "r"
     }).toString());
@@ -6379,131 +6379,34 @@ var streamDeck = {
 var plugin_default = streamDeck;
 
 // src/plugin.ts
-var import_fs = require("fs");
-var import_path = require("path");
-var import_os = require("os");
-var import_child_process = require("child_process");
-var EXCALIBUR_DIR = (0, import_path.join)(
-  (0, import_os.homedir)(),
+var import_fs = __toESM(require("fs"), 1);
+var import_path = __toESM(require("path"), 1);
+var import_os = __toESM(require("os"), 1);
+var import_http = __toESM(require("http"), 1);
+var EXCALIBUR_DIR = import_path.default.join(
+  import_os.default.homedir(),
   "Library",
   "Application Support",
   "Knights of the Editing Table",
   "excalibur"
 );
-var CMDLIST_PATH = (0, import_path.join)(EXCALIBUR_DIR, ".cmdlist.json");
-var SHORTCUTS_PATH = (0, import_path.join)(EXCALIBUR_DIR, ".shortcuts.json");
-var AUTO_SHORTCUT_KEYS = [
-  "1",
-  "2",
-  "3",
-  "4",
-  "5",
-  "6",
-  "7",
-  "8",
-  "9",
-  "0",
-  "q",
-  "w",
-  "e",
-  "r",
-  "y",
-  "u",
-  "p",
-  "g",
-  "h",
-  "k",
-  "l",
-  "z",
-  "x",
-  "b",
-  "n"
-];
-function readShortcuts() {
-  try {
-    if (!(0, import_fs.existsSync)(SHORTCUTS_PATH))
-      return {};
-    return JSON.parse((0, import_fs.readFileSync)(SHORTCUTS_PATH, "utf-8"));
-  } catch {
-    return {};
-  }
-}
-function writeShortcuts(shortcuts) {
-  try {
-    (0, import_fs.writeFileSync)(SHORTCUTS_PATH, JSON.stringify(shortcuts), "utf-8");
-    plugin_default.logger.info("Updated Excalibur shortcuts file");
-  } catch (err) {
-    plugin_default.logger.error("Failed to write shortcuts:", err);
-  }
-}
-function ensureShortcuts() {
-  try {
-    if (!(0, import_fs.existsSync)(CMDLIST_PATH))
-      return;
-    const cmdlist = JSON.parse((0, import_fs.readFileSync)(CMDLIST_PATH, "utf-8"));
-    const shortcuts = readShortcuts();
-    const userEntries = cmdlist["us"] ?? {};
-    const userNames = Object.keys(userEntries).filter(
-      (name) => userEntries[name].show === 1
-    );
-    const usedKeys = /* @__PURE__ */ new Set();
-    for (const val of Object.values(shortcuts)) {
-      if (typeof val === "string") {
-        const dotIdx = val.indexOf(".");
-        const key = dotIdx === -1 ? val : val.slice(0, dotIdx);
-        if (typeof val === "string" && val.includes("ctrl") && val.includes("alt") && val.includes("m")) {
-          usedKeys.add(key);
-        }
-      }
-    }
-    let dirty = false;
-    let keyIdx = 0;
-    for (const name of userNames) {
-      if (shortcuts[name])
-        continue;
-      while (keyIdx < AUTO_SHORTCUT_KEYS.length && usedKeys.has(AUTO_SHORTCUT_KEYS[keyIdx])) {
-        keyIdx++;
-      }
-      if (keyIdx >= AUTO_SHORTCUT_KEYS.length) {
-        plugin_default.logger.warn(`Ran out of auto-shortcut keys at command "${name}"`);
-        break;
-      }
-      const key = AUTO_SHORTCUT_KEYS[keyIdx];
-      shortcuts[name] = `${key}.m_alt_ctrl`;
-      usedKeys.add(key);
-      keyIdx++;
-      dirty = true;
-      plugin_default.logger.info(`Auto-assigned shortcut Ctrl+Shift+Option+${key.toUpperCase()} to "${name}"`);
-    }
-    if (dirty) {
-      writeShortcuts(shortcuts);
-    }
-  } catch (err) {
-    plugin_default.logger.error("ensureShortcuts failed:", err);
-  }
-}
+var CMDLIST_PATH = import_path.default.join(EXCALIBUR_DIR, ".cmdlist.json");
+var MAYDAY_PORT = 9876;
 function readExcaliburCommands() {
   try {
-    if (!(0, import_fs.existsSync)(CMDLIST_PATH))
+    if (!import_fs.default.existsSync(CMDLIST_PATH))
       return [];
-    const cmdlistRaw = (0, import_fs.readFileSync)(CMDLIST_PATH, "utf-8");
-    const shortcutsRaw = (0, import_fs.existsSync)(SHORTCUTS_PATH) ? (0, import_fs.readFileSync)(SHORTCUTS_PATH, "utf-8") : "{}";
-    const cmdlist = JSON.parse(cmdlistRaw);
-    const shortcuts = JSON.parse(shortcutsRaw);
+    const cmdlist = JSON.parse(import_fs.default.readFileSync(CMDLIST_PATH, "utf-8"));
     const commands = [];
     const userEntries = cmdlist["us"] ?? {};
     for (const [name, cmd] of Object.entries(userEntries)) {
       if (cmd.show !== 1)
         continue;
-      const shortcut = parseShortcut(shortcuts[name]);
-      if (!shortcut)
-        continue;
       commands.push({
         id: `us:${name}`,
         name,
         category: "us",
-        categoryLabel: "User Commands",
-        shortcut
+        categoryLabel: "User Commands"
       });
     }
     return commands;
@@ -6512,51 +6415,45 @@ function readExcaliburCommands() {
     return [];
   }
 }
-function parseShortcut(raw) {
-  if (!raw)
-    return null;
-  if (typeof raw === "string") {
-    const dotIdx = raw.indexOf(".");
-    if (dotIdx === -1) {
-      return raw ? { key: raw, modifiers: [] } : null;
-    }
-    const key = raw.slice(0, dotIdx);
-    const modsStr = raw.slice(dotIdx + 1);
-    const modifiers = modsStr.split("_").map((m) => m.replace(/^m$/, "shift")).filter(Boolean);
-    return key ? { key, modifiers } : null;
-  }
-  if (typeof raw === "object") {
-    if (!raw.v)
-      return null;
-    const modifiers = [];
-    if (raw.a)
-      modifiers.push(raw.a);
-    return { key: raw.v, modifiers };
-  }
-  return null;
-}
-var MOD_MAP = {
-  cmd: "command down",
-  command: "command down",
-  shift: "shift down",
-  m: "shift down",
-  alt: "option down",
-  option: "option down",
-  ctrl: "control down",
-  control: "control down"
-};
-function simulateKeystroke(key, modifiers) {
-  const mods = modifiers.map((m) => MOD_MAP[m.toLowerCase()]).filter(Boolean);
-  let script;
-  if (mods.length > 0) {
-    script = `tell application "System Events" to keystroke "${key}" using {${mods.join(", ")}}`;
-  } else {
-    script = `tell application "System Events" to keystroke "${key}"`;
-  }
-  (0, import_child_process.exec)(`osascript -e '${script}'`, (err) => {
-    if (err) {
-      plugin_default.logger.error("AppleScript keystroke failed:", err.message);
-    }
+function executeCommand(commandName) {
+  return new Promise((resolve) => {
+    const body = JSON.stringify({ commandName });
+    const req = import_http.default.request(
+      {
+        hostname: "127.0.0.1",
+        port: MAYDAY_PORT,
+        path: "/api/excalibur/execute",
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Content-Length": Buffer.byteLength(body)
+        },
+        timeout: 1e4
+      },
+      (res) => {
+        let data = "";
+        res.on("data", (chunk) => {
+          data += chunk;
+        });
+        res.on("end", () => {
+          try {
+            const result = JSON.parse(data);
+            resolve(result);
+          } catch {
+            resolve({ success: false, error: `Bad response: ${data.slice(0, 200)}` });
+          }
+        });
+      }
+    );
+    req.on("error", (err) => {
+      resolve({ success: false, error: `Connection failed: ${err.message}` });
+    });
+    req.on("timeout", () => {
+      req.destroy();
+      resolve({ success: false, error: "Request timed out" });
+    });
+    req.write(body);
+    req.end();
   });
 }
 var ExcaliburCommandAction = class extends SingletonAction {
@@ -6571,17 +6468,20 @@ var ExcaliburCommandAction = class extends SingletonAction {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   async onKeyDown(ev) {
     const settings2 = ev.payload.settings;
-    if (!settings2.shortcutKey) {
-      plugin_default.logger.warn(
-        `No shortcut for command "${settings2.commandName}"`
-      );
+    if (!settings2.commandName) {
       await ev.action.showAlert();
       return;
     }
     try {
-      simulateKeystroke(settings2.shortcutKey, settings2.shortcutModifiers ?? []);
+      const result = await executeCommand(settings2.commandName);
+      if (result.success) {
+        await ev.action.showOk();
+      } else {
+        plugin_default.logger.error(`Command "${settings2.commandName}" failed: ${result.error}`);
+        await ev.action.showAlert();
+      }
     } catch (err) {
-      plugin_default.logger.error("Keystroke simulation failed:", err);
+      plugin_default.logger.error("Execute failed:", err);
       await ev.action.showAlert();
     }
   }
@@ -6596,22 +6496,12 @@ var ExcaliburCommandAction = class extends SingletonAction {
   onSendToPlugin(ev) {
     const payload = ev.payload;
     if (payload.event === "getCommands") {
-      ensureShortcuts();
       const commands = readExcaliburCommands();
       plugin_default.ui.sendToPropertyInspector({ event: "commands", commands });
     }
   }
 };
 plugin_default.actions.registerAction(new ExcaliburCommandAction());
-ensureShortcuts();
-for (const filePath of [CMDLIST_PATH, SHORTCUTS_PATH]) {
-  if ((0, import_fs.existsSync)(filePath)) {
-    watchFile(filePath, { interval: 5e3 }, () => {
-      plugin_default.logger.info(`Excalibur file changed: ${filePath}`);
-      ensureShortcuts();
-    });
-  }
-}
 plugin_default.connect();
 /*! Bundled license information:
 

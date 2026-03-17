@@ -1,5 +1,8 @@
 import express from 'express';
 import http from 'http';
+import fs from 'fs';
+import path from 'path';
+import os from 'os';
 import { WebSocketServer, WebSocket } from 'ws';
 import { v4 as uuid } from 'uuid';
 import type { BridgeMessage, ServerStatusPayload } from '@mayday/types';
@@ -130,6 +133,185 @@ export async function startServer(config: ServerConfig) {
       res.json({ success: true });
     } catch (err) {
       res.status(400).json({ success: false, error: String(err) });
+    }
+  });
+
+  // ── Excalibur Stream Deck integration ─────────────────────────────────────
+  const excaliburDir = path.join(
+    os.homedir(), 'Library', 'Application Support',
+    'Knights of the Editing Table', 'excalibur',
+  );
+
+  app.post('/api/excalibur/execute', async (req, res) => {
+    const { commandName } = req.body as { commandName?: string };
+    if (!commandName) {
+      res.status(400).json({ success: false, error: 'Missing commandName' });
+      return;
+    }
+
+    if (!bridge.isConnected()) {
+      res.status(503).json({ success: false, error: 'Premiere Pro not connected. Open Premiere and the Mayday panel.' });
+      return;
+    }
+
+    try {
+      // Read command definition
+      const cmdlistPath = path.join(excaliburDir, '.cmdlist.json');
+      const presetPath = path.join(excaliburDir, '.presetaction.json');
+
+      if (!fs.existsSync(cmdlistPath)) {
+        res.status(404).json({ success: false, error: 'Excalibur .cmdlist.json not found' });
+        return;
+      }
+
+      const cmdlist = JSON.parse(fs.readFileSync(cmdlistPath, 'utf-8'));
+      const userCmd = cmdlist?.us?.[commandName];
+      if (!userCmd) {
+        res.status(404).json({ success: false, error: `Command "${commandName}" not found` });
+        return;
+      }
+
+      const presets = fs.existsSync(presetPath)
+        ? JSON.parse(fs.readFileSync(presetPath, 'utf-8'))
+        : {};
+
+      // Find the selected clip
+      const clipInfo = await bridge.callExtendScript('effects.getSelectedClipInfo') as {
+        trackIndex: number; clipIndex: number; trackType: string; clipName: string;
+      } | null;
+
+      if (!clipInfo) {
+        res.status(400).json({ success: false, error: 'No clip selected in Premiere Pro' });
+        return;
+      }
+
+      const results: string[] = [];
+
+      // Execute each module in the command
+      const modules = userCmd.modules ?? {};
+      for (const [_modKey, mod] of Object.entries(modules) as Array<[string, any]>) {
+        const cmdID: string = mod.cmdID ?? '';
+        const cmdName: string = mod.cmdName ?? '';
+        const subMenu: any = mod.subMenu ?? {};
+
+        if (cmdID === 'fxvp.' || cmdID === 'fxap.') {
+          // Apply video/audio preset
+          const presetCategory = cmdID === 'fxvp.' ? 'vp' : 'ap';
+          const presetData = presets?.[presetCategory]?.[cmdName];
+
+          if (!presetData) {
+            results.push(`Preset "${cmdName}" not found in ${presetCategory}`);
+            continue;
+          }
+
+          // Convert .presetaction format to applyEffects format
+          const effects = Array.isArray(presetData) ? presetData : [presetData];
+          const effectsDefs = effects.map((e: any) => ({
+            displayName: e.name,
+            matchName: e.matchName ?? '',
+            isIntrinsic: (e.matchName ?? '').indexOf('ADBE Motion') >= 0 ||
+                         (e.matchName ?? '').indexOf('ADBE Opacity') >= 0 ||
+                         (e.matchName ?? '').indexOf('ADBE Time Remapping') >= 0,
+            properties: (e.props ?? []).map((p: any) => ({
+              displayName: p.Name,
+              matchName: p.matchName ?? '',
+              value: p.CurrentValue,
+              type: typeof p.CurrentValue === 'number' ? 2 : 1,
+              keyframes: null,
+            })),
+          }));
+
+          const result = await bridge.callExtendScript('effects.applyEffects', [
+            clipInfo.trackIndex, clipInfo.clipIndex, clipInfo.trackType,
+            JSON.stringify(effectsDefs),
+          ]);
+          results.push(`Applied preset "${cmdName}": ${JSON.stringify(result)}`);
+
+        } else if (cmdID === 'fxcl.') {
+          // Clip operation
+          if (cmdName === 'Nest Individual Clips' || cmdName === 'Nest') {
+            // Nesting requires special handling — not directly available in basic ExtendScript
+            results.push(`Nest operation not yet supported via bridge`);
+          } else if (subMenu?.selected === 'set') {
+            // Set a property value (Position, Scale, Volume, etc.)
+            const propName = cmdName;
+            const value = subMenu.value != null ? parseFloat(subMenu.value) : null;
+            const valueX = subMenu.valuex != null ? parseFloat(subMenu.valuex) : null;
+            const valueY = subMenu.valuey != null ? parseFloat(subMenu.valuey) : null;
+
+            // Build property update for intrinsic Motion/Opacity component
+            const propDef: any = { displayName: propName, value: null };
+
+            if (valueX != null && valueY != null) {
+              // Position-like: set as array (Premiere uses [x, y] internally for some props)
+              // But setValue expects a single value, so we try setting each axis
+              // For Position, we need to set the sub-properties directly
+              propDef.value = value; // fallback
+            } else if (value != null) {
+              propDef.value = value;
+            }
+
+            if (propDef.value != null) {
+              // Apply as intrinsic effect property
+              const effectsDef = [{
+                displayName: 'Motion',
+                isIntrinsic: true,
+                properties: [propDef],
+              }];
+
+              // For Volume, target the audio clip's intrinsic effect
+              if (propName === 'Volume' || propName === 'Level') {
+                effectsDef[0].displayName = 'Volume';
+              }
+
+              const result = await bridge.callExtendScript('effects.applyEffects', [
+                clipInfo.trackIndex, clipInfo.clipIndex, clipInfo.trackType,
+                JSON.stringify(effectsDef),
+              ]);
+              results.push(`Set ${propName}: ${JSON.stringify(result)}`);
+            } else {
+              results.push(`No value for ${propName}`);
+            }
+          } else if (subMenu?.selected === 'atclips') {
+            // Apply effect to clips (treat as preset application)
+            const presetData = presets?.['ap']?.[cmdName] ?? presets?.['vp']?.[cmdName];
+            if (presetData) {
+              const effects = Array.isArray(presetData) ? presetData : [presetData];
+              const effectsDefs = effects.map((e: any) => ({
+                displayName: e.name,
+                matchName: e.matchName ?? '',
+                isIntrinsic: false,
+                properties: (e.props ?? []).map((p: any) => ({
+                  displayName: p.Name,
+                  matchName: p.matchName ?? '',
+                  value: p.CurrentValue,
+                  type: typeof p.CurrentValue === 'number' ? 2 : 1,
+                  keyframes: null,
+                })),
+              }));
+
+              const result = await bridge.callExtendScript('effects.applyEffects', [
+                clipInfo.trackIndex, clipInfo.clipIndex, clipInfo.trackType,
+                JSON.stringify(effectsDefs),
+              ]);
+              results.push(`Applied "${cmdName}": ${JSON.stringify(result)}`);
+            } else {
+              results.push(`Preset "${cmdName}" not found`);
+            }
+          } else {
+            results.push(`Unknown fxcl operation: ${cmdName} (${JSON.stringify(subMenu)})`);
+          }
+        } else {
+          results.push(`Unknown command type: ${cmdID}`);
+        }
+      }
+
+      console.log(`[Excalibur] Executed "${commandName}":`, results);
+      res.json({ success: true, results });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      console.error(`[Excalibur] Execute error:`, message);
+      res.status(500).json({ success: false, error: message });
     }
   });
 

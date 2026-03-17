@@ -7,7 +7,7 @@ await build({
   target: 'node20',
   format: 'cjs',
   outfile: 'com.mayday.excalibur.sdPlugin/bin/plugin.js',
-  external: [],
+  external: ['fs', 'path', 'os', 'child_process', 'crypto', 'events', 'stream', 'util', 'net', 'http', 'https', 'url', 'node:*'],
   minify: false,
   sourcemap: true,
 });

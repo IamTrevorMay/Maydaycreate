@@ -96,16 +96,9 @@
       <button class="refresh-btn" id="refreshBtn" title="Refresh command list">↻</button>
     </div>
 
-    <div class="row">
-      <label>Shortcut</label>
-      <div class="field">
-        <span class="shortcut-badge" id="shortcutDisplay">—</span>
-      </div>
-    </div>
-
     <div class="info" id="infoBox">
-      Select an Excalibur user command above. The keyboard shortcut will be
-      sent automatically when you press this Stream Deck button.
+      Select an Excalibur user command above. It will be executed directly
+      in Premiere Pro via the Mayday server when you press this button.
     </div>
 
     <script>
@@ -250,29 +243,16 @@
 
       function applySettingsToUI() {
         const select = document.getElementById('commandSelect');
-        const shortcutDisplay = document.getElementById('shortcutDisplay');
         const infoBox = document.getElementById('infoBox');
 
         if (currentSettings.commandId) {
           select.value = currentSettings.commandId;
         }
 
-        if (currentSettings.shortcutKey) {
-          const display = formatShortcut({
-            key: currentSettings.shortcutKey,
-            modifiers: currentSettings.shortcutModifiers || [],
-          });
-          shortcutDisplay.textContent = display;
-          shortcutDisplay.className = 'shortcut-badge';
-          infoBox.textContent = `Pressing this button will send ${display} to trigger "${currentSettings.commandName}".`;
-        } else if (currentSettings.commandName) {
-          shortcutDisplay.textContent = 'No shortcut assigned';
-          shortcutDisplay.className = 'shortcut-badge none';
-          infoBox.textContent = `⚠ "${currentSettings.commandName}" has no keyboard shortcut in Excalibur. Assign one in Excalibur → Settings → User Commands to use this button.`;
+        if (currentSettings.commandName) {
+          infoBox.textContent = `Pressing this button will execute "${currentSettings.commandName}" in Premiere Pro.`;
         } else {
-          shortcutDisplay.textContent = '—';
-          shortcutDisplay.className = 'shortcut-badge';
-          infoBox.textContent = 'Select an Excalibur user command above. The keyboard shortcut will be sent automatically when you press this Stream Deck button.';
+          infoBox.textContent = 'Select an Excalibur user command above. It will be executed directly in Premiere Pro via the Mayday server when you press this button.';
         }
       }
 
@@ -291,8 +271,6 @@
           commandId: cmd.id,
           commandName: cmd.name,
           category: cmd.category,
-          shortcutKey: cmd.shortcut?.key || '',
-          shortcutModifiers: cmd.shortcut?.modifiers || [],
         };
 
         setSettings(settings);
