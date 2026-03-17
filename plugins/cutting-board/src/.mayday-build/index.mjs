@@ -466,7 +466,16 @@ var CuttingBoardDB = class {
   }
   getAllForTraining() {
     return this.db.prepare(`
-      SELECT cr.*, s.sequence_name
+      SELECT
+        cr.id, cr.session_id AS sessionId, cr.edit_type AS editType,
+        cr.edit_point_time AS editPointTime, cr.clip_name AS clipName,
+        cr.media_path AS mediaPath, cr.track_index AS trackIndex,
+        cr.track_type AS trackType, cr.before_state AS beforeState,
+        cr.after_state AS afterState, cr.audio_category AS audioCategory,
+        cr.rating, cr.voice_transcript AS voiceTranscript, cr.notes,
+        cr.is_undo AS isUndo, cr.detected_at AS detectedAt,
+        cr.feedback_at AS feedbackAt, cr.boosted,
+        s.sequence_name AS sequenceName
       FROM cut_records cr
       JOIN sessions s ON cr.session_id = s.id
       WHERE cr.is_undo = 0
@@ -475,7 +484,16 @@ var CuttingBoardDB = class {
   }
   getQualityRecords() {
     const records = this.db.prepare(`
-      SELECT cr.*, s.sequence_name
+      SELECT
+        cr.id, cr.session_id AS sessionId, cr.edit_type AS editType,
+        cr.edit_point_time AS editPointTime, cr.clip_name AS clipName,
+        cr.media_path AS mediaPath, cr.track_index AS trackIndex,
+        cr.track_type AS trackType, cr.before_state AS beforeState,
+        cr.after_state AS afterState, cr.audio_category AS audioCategory,
+        cr.rating, cr.voice_transcript AS voiceTranscript, cr.notes,
+        cr.is_undo AS isUndo, cr.detected_at AS detectedAt,
+        cr.feedback_at AS feedbackAt, cr.boosted,
+        s.sequence_name AS sequenceName
       FROM cut_records cr
       JOIN sessions s ON cr.session_id = s.id
       WHERE cr.is_undo = 0
@@ -733,10 +751,6 @@ function editTypeToOutput(editType) {
   return output;
 }
 function trainClassifier(examples) {
-  const net = new brain.NeuralNetwork({
-    hiddenLayers: [32, 16],
-    activation: "sigmoid"
-  });
   const trainingData = [];
   for (let i = 0; i < examples.length; i++) {
     const ex = examples[i];
@@ -749,19 +763,27 @@ function trainClassifier(examples) {
       trainingData.push({ input, output });
     }
   }
-  net.train(trainingData, {
-    iterations: 2e3,
-    errorThresh: 0.01,
-    log: false
+  console.log(`[Model] Training on ${trainingData.length} samples`);
+  const net = new brain.NeuralNetwork({
+    hiddenLayers: [32, 16],
+    activation: "sigmoid"
   });
+  const result = net.train(trainingData, {
+    iterations: 2e4,
+    errorThresh: 5e-3,
+    log: false,
+    logPeriod: 1e3
+  });
+  console.log(`[Model] Training complete: ${result.iterations} iterations, error: ${result.error.toFixed(6)}`);
   let correct = 0;
   for (const item of trainingData) {
     const prediction = net.run(item.input);
     const predicted = Object.entries(prediction).sort((a, b) => b[1] - a[1])[0][0];
-    const actual = Object.entries(item.output).find(([, v]) => v === 1)?.[0];
+    const actual = Object.entries(item.output).find(([, v]) => v === 1)?.[0] ?? "unknown";
     if (predicted === actual) correct++;
   }
   const accuracy = trainingData.length > 0 ? correct / trainingData.length : 0;
+  console.log(`[Model] Accuracy: ${(accuracy * 100).toFixed(1)}% (${correct}/${trainingData.length})`);
   return { model: net.toJSON(), accuracy };
 }
 function trainRegressor(editType, examples) {
