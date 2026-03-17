@@ -7,7 +7,7 @@ await build({
   target: 'node20',
   format: 'cjs',
   outfile: 'com.mayday.excalibur.sdPlugin/bin/plugin.js',
-  external: ['@elgato/streamdeck'],
+  external: [],
   minify: false,
   sourcemap: true,
 });
