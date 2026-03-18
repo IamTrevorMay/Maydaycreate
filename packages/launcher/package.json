@@ -1,6 +1,6 @@
 {
   "name": "@mayday/launcher",
-  "version": "0.1.13",
+  "version": "0.1.14",
   "private": true,
   "description": "Plugin development platform for Adobe Premiere Pro",
   "author": "Mayday",
@@ -54,12 +54,7 @@
       "resources/**/*",
       "!**/node_modules/.bin/**"
     ],
-    "asar": true,
-    "asarUnpack": [
-      "**/*.node",
-      "**/better-sqlite3/**",
-      "**/node_modules/gpu.js/**"
-    ],
+    "asar": false,
     "extraResources": [
       {
         "from": "../../plugins",
