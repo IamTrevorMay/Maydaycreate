@@ -145,6 +145,8 @@ var MaydayEffects = (function () {
     }
 
     function setPropertyValues(component, properties) {
+        var seq = app.project.activeSequence;
+        var setErrors = [];
         for (var p = 0; p < properties.length; p++) {
             var propDef = properties[p];
             if (propDef.value === null || propDef.value === undefined) continue;
@@ -154,14 +156,44 @@ var MaydayEffects = (function () {
                 if (prop.displayName === propDef.displayName ||
                     (propDef.matchName && prop.matchName === propDef.matchName)) {
                     try {
-                        prop.setValue(propDef.value, true);
+                        if (propDef.colorARGB) {
+                            // Color property (PCT 5) — use dedicated setColorValue() API
+                            // setColorValue() takes alpha, red, green, blue (0-255 each)
+                            prop.setColorValue(
+                                propDef.colorARGB.a,
+                                propDef.colorARGB.r,
+                                propDef.colorARGB.g,
+                                propDef.colorARGB.b,
+                                true
+                            );
+                        } else if (propDef.value instanceof Array && propDef.value.length === 2 && seq) {
+                            // 2D point property (Position, Anchor Point, etc.)
+                            // Values from Excalibur presets are normalized (0-1 range)
+                            // and need conversion to pixel coordinates.
+                            // Values from fxcl.+set are already in pixels (pixelValues flag).
+                            var x = propDef.value[0];
+                            var y = propDef.value[1];
+                            if (!propDef.pixelValues) {
+                                x = x * seq.frameSizeHorizontal;
+                                y = y * seq.frameSizeVertical;
+                            }
+                            prop.setValue([x, y], true);
+                        } else if (typeof propDef.value === "boolean") {
+                            // Boolean property (PCT 4) — pass true/false directly
+                            prop.setValue(propDef.value, true);
+                        } else {
+                            // Integer (PCT 1), Float (PCT 2/8), Angle (PCT 3),
+                            // Dropdown (PCT 7), or any future numeric type
+                            prop.setValue(propDef.value, true);
+                        }
                     } catch (e) {
-                        // Some properties can't be set
+                        setErrors.push(propDef.displayName + ": " + String(e));
                     }
                     break;
                 }
             }
         }
+        return setErrors;
     }
 
     function setKeyframes(component, properties) {
@@ -221,7 +253,12 @@ var MaydayEffects = (function () {
                     for (var c = 0; c < clip.components.numItems; c++) {
                         var comp = clip.components[c];
                         if (comp.displayName === effectDef.displayName) {
-                            setPropertyValues(comp, effectDef.properties);
+                            var setErrs = setPropertyValues(comp, effectDef.properties);
+                            if (setErrs && setErrs.length > 0) {
+                                for (var se = 0; se < setErrs.length; se++) {
+                                    errors.push(setErrs[se]);
+                                }
+                            }
                             setKeyframes(comp, effectDef.properties);
                             applied.push(effectDef.displayName);
                             found = true;
@@ -246,7 +283,12 @@ var MaydayEffects = (function () {
                             }
                         }
                         if (newComp) {
-                            setPropertyValues(newComp, effectDef.properties);
+                            var setErrs2 = setPropertyValues(newComp, effectDef.properties);
+                            if (setErrs2 && setErrs2.length > 0) {
+                                for (var se2 = 0; se2 < setErrs2.length; se2++) {
+                                    errors.push(setErrs2[se2]);
+                                }
+                            }
                             setKeyframes(newComp, effectDef.properties);
                         }
                         applied.push(effectDef.displayName);

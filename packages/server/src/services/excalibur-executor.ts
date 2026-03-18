@@ -14,6 +14,163 @@ export interface ExcaliburResult {
   error?: string;
 }
 
+/**
+ * Decode a Premiere Pro packed 64-bit color integer into ARGB (0-255 each).
+ *
+ * Premiere stores colors as 64-bit values with 16 bits per channel,
+ * where the 8-bit color value occupies the upper byte of each 16-bit slot:
+ *   Bits 63-48: Alpha (upper byte = alpha value)
+ *   Bits 47-32: Red
+ *   Bits 31-16: Green
+ *   Bits 15-0:  Blue
+ *
+ * These values exceed Number.MAX_SAFE_INTEGER so we use BigInt for parsing.
+ */
+function decodePackedColor(packedStr: string): { a: number; r: number; g: number; b: number } | null {
+  try {
+    const big = BigInt(packedStr);
+    const a = Number((big >> 56n) & 0xFFn);
+    const r = Number((big >> 40n) & 0xFFn);
+    const g = Number((big >> 24n) & 0xFFn);
+    const b = Number((big >> 8n) & 0xFFn);
+    return { a, r, g, b };
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Resolve the correct value for an Excalibur preset property.
+ *
+ * Excalibur's .presetaction.json stores values in two places:
+ * - `CurrentValue`: sometimes correct, sometimes 0 or null
+ * - `StartKeyframe`: always has the real value as "ticks,value,..."
+ *
+ * ParameterControlType (maps to After Effects PF_ParamType):
+ *   0  = Layer reference — not settable
+ *   1  = Integer (Seed, Edge Feather, Contrast, RGB values)
+ *   2  = Float slider (Scale, Crop, Opacity, Blur Length)
+ *   3  = Angle (Rotation, Direction, Skew Axis)
+ *   4  = Boolean (Shadow Only, Monochrome, Clipping, etc.)
+ *   5  = Color — settable via setColorValue(a, r, g, b)
+ *   6  = 2D Point (Position, Anchor Point) — normalized x:y
+ *   7  = Dropdown/enum (Film Size, Equalize, Operator, etc.)
+ *   8  = Float slider (Lumetri: Temperature, Exposure, Shadows, etc.)
+ *   9  = Curve/blob (base64) — not settable
+ *   10 = Blob (base64) — not settable
+ *   11 = Section toggle — UI-only collapse state, not settable
+ *   12 = Internal boolean — not settable
+ *   13 = Group start — UI-only, not settable
+ *   14 = Group end — UI-only, not settable
+ *   15 = Button — no data, not settable
+ *   16 = Reserved boolean — not settable
+ *   17 = Reserved — not settable
+ *   18 = 3D Point — AE-only, not in Premiere
+ */
+function resolvePropertyValue(p: any): { value: any; colorARGB?: { a: number; r: number; g: number; b: number } } {
+  const pct: number = p.ParameterControlType ?? -1;
+  const cv = p.CurrentValue;
+  const sk: string | undefined = typeof p.StartKeyframe === 'string' ? p.StartKeyframe : undefined;
+  const name: string = p.Name ?? '';
+
+  // Types that are never settable (no data, binary blobs, UI-only, reserved)
+  if ([0, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18].includes(pct)) {
+    return { value: null };
+  }
+
+  // Type 5: Color — decode packed int64 from StartKeyframe, use setColorValue() in ExtendScript
+  if (pct === 5) {
+    if (sk) {
+      const parts = sk.split(',');
+      if (parts.length >= 2) {
+        const argb = decodePackedColor(parts[1]);
+        if (argb) return { value: 'color', colorARGB: argb };
+      }
+    }
+    return { value: null };
+  }
+
+  // Type 6: 2D Point (Position, Anchor Point)
+  // CurrentValue is always null; real value in StartKeyframe as "ticks,x:y,..."
+  if (pct === 6) {
+    if (sk) {
+      const parts = sk.split(',');
+      if (parts.length >= 2 && parts[1].includes(':')) {
+        const [xStr, yStr] = parts[1].split(':');
+        const x = parseFloat(xStr);
+        const y = parseFloat(yStr);
+        if (!isNaN(x) && !isNaN(y)) return { value: [x, y] };
+      }
+    }
+    return { value: null };
+  }
+
+  // Types 2, 3, 8: Float/angle/slider
+  // CurrentValue is often 0 when the real value is in StartKeyframe
+  if ([2, 3, 8].includes(pct)) {
+    if (cv != null && cv !== 0) return { value: cv };
+    if (sk) {
+      const parts = sk.split(',');
+      if (parts.length >= 2) {
+        const parsed = parseFloat(parts[1]);
+        if (!isNaN(parsed)) return { value: parsed };
+      }
+    }
+    return { value: cv ?? null };
+  }
+
+  // Type 1: Integer — CurrentValue is usually 0; real value in StartKeyframe
+  if (pct === 1) {
+    if (cv != null && cv !== 0) return { value: cv };
+    if (sk) {
+      const parts = sk.split(',');
+      if (parts.length >= 2) {
+        const parsed = parseInt(parts[1], 10);
+        if (!isNaN(parsed)) return { value: parsed };
+      }
+    }
+    return { value: cv ?? null };
+  }
+
+  // Type 4: Boolean — skip unnamed ("?"), resolve named booleans from StartKeyframe
+  if (pct === 4) {
+    if (!name || name === '?') return { value: null };
+    if (sk) {
+      const parts = sk.split(',');
+      if (parts.length >= 2) {
+        return { value: parts[1] === 'true' };
+      }
+    }
+    return { value: null };
+  }
+
+  // Type 7: Dropdown/enum — integer index value
+  if (pct === 7) {
+    if (!name || name === '?') return { value: null };
+    if (cv != null && cv !== 0) return { value: cv };
+    if (sk) {
+      const parts = sk.split(',');
+      if (parts.length >= 2) {
+        const parsed = parseInt(parts[1], 10);
+        if (!isNaN(parsed)) return { value: parsed };
+      }
+    }
+    return { value: null };
+  }
+
+  // Unknown/future PCT: attempt to use CurrentValue as fallback
+  // This ensures new Excalibur parameter types aren't silently dropped
+  if (cv != null && cv !== 0) return { value: cv };
+  if (sk) {
+    const parts = sk.split(',');
+    if (parts.length >= 2) {
+      const parsed = parseFloat(parts[1]);
+      if (!isNaN(parsed)) return { value: parsed };
+    }
+  }
+  return { value: cv ?? null };
+}
+
 export async function executeExcaliburCommand(
   commandName: string,
   bridge: BridgeHandler,
@@ -75,13 +232,18 @@ export async function executeExcaliburCommand(
         isIntrinsic: (e.matchName ?? '').indexOf('ADBE Motion') >= 0 ||
                      (e.matchName ?? '').indexOf('ADBE Opacity') >= 0 ||
                      (e.matchName ?? '').indexOf('ADBE Time Remapping') >= 0,
-        properties: (e.props ?? []).map((p: any) => ({
-          displayName: p.Name,
-          matchName: p.matchName ?? '',
-          value: p.CurrentValue,
-          type: typeof p.CurrentValue === 'number' ? 2 : 1,
-          keyframes: null,
-        })),
+        properties: (e.props ?? []).filter((p: any) => p.Name).map((p: any) => {
+          const resolved = resolvePropertyValue(p);
+          const entry: any = {
+            displayName: p.Name,
+            matchName: p.matchName ?? '',
+            value: resolved.value,
+            type: p.ParameterControlType ?? (typeof resolved.value === 'number' ? 2 : 1),
+            keyframes: null,
+          };
+          if (resolved.colorARGB) entry.colorARGB = resolved.colorARGB;
+          return entry;
+        }),
       }));
 
       const result = await bridge.callExtendScript('effects.applyEffects', [
@@ -103,7 +265,9 @@ export async function executeExcaliburCommand(
         const propDef: any = { displayName: propName, value: null };
 
         if (valueX != null && valueY != null) {
-          propDef.value = value;
+          // 2D point property (e.g., Position) — already in pixel coordinates
+          propDef.value = [valueX, valueY];
+          propDef.pixelValues = true;
         } else if (value != null) {
           propDef.value = value;
         }
@@ -134,14 +298,21 @@ export async function executeExcaliburCommand(
           const effectsDefs = effects.map((e: any) => ({
             displayName: e.name,
             matchName: e.matchName ?? '',
-            isIntrinsic: false,
-            properties: (e.props ?? []).map((p: any) => ({
-              displayName: p.Name,
-              matchName: p.matchName ?? '',
-              value: p.CurrentValue,
-              type: typeof p.CurrentValue === 'number' ? 2 : 1,
-              keyframes: null,
-            })),
+            isIntrinsic: (e.matchName ?? '').indexOf('ADBE Motion') >= 0 ||
+                         (e.matchName ?? '').indexOf('ADBE Opacity') >= 0 ||
+                         (e.matchName ?? '').indexOf('ADBE Time Remapping') >= 0,
+            properties: (e.props ?? []).filter((p: any) => p.Name).map((p: any) => {
+              const resolved = resolvePropertyValue(p);
+              const entry: any = {
+                displayName: p.Name,
+                matchName: p.matchName ?? '',
+                value: resolved.value,
+                type: p.ParameterControlType ?? (typeof resolved.value === 'number' ? 2 : 1),
+                keyframes: null,
+              };
+              if (resolved.colorARGB) entry.colorARGB = resolved.colorARGB;
+              return entry;
+            }),
           }));
 
           const result = await bridge.callExtendScript('effects.applyEffects', [

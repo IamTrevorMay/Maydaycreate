@@ -1,0 +1,9 @@
+{
+  "name": "streamdeck-worker",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "@elgato-stream-deck/node": "^6.0.0",
+    "@napi-rs/canvas": "^0.1.65"
+  }
+}

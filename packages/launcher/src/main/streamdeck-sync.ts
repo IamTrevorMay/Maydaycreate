@@ -77,16 +77,34 @@ export class StreamDeckSyncService {
 
       if (!data?.config) return;
 
+      // Migrate v1 → v2 if remote config is missing deviceModel
+      let remoteConfig = data.config;
+      if (!remoteConfig.deviceModel || remoteConfig.version !== 2) {
+        remoteConfig = {
+          version: 2,
+          deviceModel: 'original',
+          lastUpdated: remoteConfig.lastUpdated || new Date().toISOString(),
+          buttons: remoteConfig.buttons || [],
+        };
+        // Ensure all 15 slots exist for 'original' model
+        if (remoteConfig.buttons.length < 15) {
+          for (let i = remoteConfig.buttons.length; i < 15; i++) {
+            remoteConfig.buttons.push({ slot: i, label: null, macroId: null });
+          }
+        }
+        console.log('[StreamDeckSync] Migrated pulled config from v1 to v2');
+      }
+
       // Only overwrite if remote is newer
       if (fs.existsSync(this.config.configFilePath)) {
         const localConfig = JSON.parse(fs.readFileSync(this.config.configFilePath, 'utf-8'));
         const localUpdated = new Date(localConfig.lastUpdated || 0).getTime();
-        const remoteUpdated = new Date(data.config.lastUpdated || 0).getTime();
+        const remoteUpdated = new Date(remoteConfig.lastUpdated || 0).getTime();
 
         if (remoteUpdated <= localUpdated) return;
       }
 
-      fs.writeFileSync(this.config.configFilePath, JSON.stringify(data.config, null, 2));
+      fs.writeFileSync(this.config.configFilePath, JSON.stringify(remoteConfig, null, 2));
       console.log('[StreamDeckSync] Pulled config');
     } catch (err) {
       console.error('[StreamDeckSync] Pull error:', err);

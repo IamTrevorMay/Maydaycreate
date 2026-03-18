@@ -114,3 +114,26 @@ export async function startEmbeddedServer(opts: {
 export function getServerBridge(): ServerBridge | null {
   return _bridge;
 }
+
+/**
+ * Gracefully stop the embedded server — kills the global key listener's native
+ * subprocess so the process can exit cleanly (no "quit unexpectedly" dialog).
+ */
+export function stopEmbeddedServer(): void {
+  if (!serverInstance) return;
+  try {
+    serverInstance.streamDeckHardware?.stop?.();
+  } catch {
+    // Best-effort cleanup
+  }
+  try {
+    serverInstance.hotkeyService?.stop?.();
+  } catch {
+    // Best-effort cleanup
+  }
+  try {
+    serverInstance.server?.close?.();
+  } catch {
+    // Best-effort cleanup
+  }
+}

@@ -63,6 +63,13 @@
           "!**/node_modules/**",
           "!**/.mayday-build/**"
         ]
+      },
+      {
+        "from": "../../tools/streamdeck-worker",
+        "to": "streamdeck-worker",
+        "filter": [
+          "**/*"
+        ]
       }
     ],
     "mac": {

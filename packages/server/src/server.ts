@@ -16,8 +16,10 @@ import { EffectsService } from './services/effects.js';
 import { HotkeyService } from './services/hotkeys.js';
 import { SupabaseSyncService } from './services/supabase-sync.js';
 import { executeExcaliburCommand, readExcaliburCommands } from './services/excalibur-executor.js';
-import { StreamDeckConfigService } from './services/streamdeck-config.js';
+import { StreamDeckConfigService, STREAM_DECK_MODELS, resizeButtonsForModel } from './services/streamdeck-config.js';
+import type { StreamDeckModelId } from './services/streamdeck-config.js';
 import { StreamDeckHardwareService } from './services/streamdeck-hardware.js';
+import { StreamDeckWorkerManager } from './services/streamdeck-worker-manager.js';
 
 export interface ServerConfig {
   port: number;
@@ -166,7 +168,8 @@ export async function startServer(config: ServerConfig) {
 
   // ── Stream Deck config + hardware ──────────────────────────────────────────
   const streamDeckConfig = new StreamDeckConfigService(config.dataDir);
-  const streamDeckHardware = new StreamDeckHardwareService(streamDeckConfig, bridge);
+  const streamDeckWorkerManager = new StreamDeckWorkerManager();
+  const streamDeckHardware = new StreamDeckHardwareService(streamDeckConfig, bridge, streamDeckWorkerManager);
   streamDeckHardware.start().catch(err => {
     console.error('[StreamDeck] Hardware start error:', err);
   });
@@ -380,6 +383,67 @@ Be concise, friendly, and focused on actionable editing advice. Reference the sp
           return;
         }
 
+        if (message.type === 'streamdeck:get-models') {
+          ws.send(JSON.stringify({
+            id: uuid(),
+            type: 'streamdeck:models-data',
+            payload: { models: STREAM_DECK_MODELS },
+            timestamp: Date.now(),
+          }));
+          return;
+        }
+
+        if (message.type === 'streamdeck:list-devices') {
+          try {
+            const devices = streamDeckWorkerManager.isReady()
+              ? await streamDeckWorkerManager.listDevices()
+              : [];
+            ws.send(JSON.stringify({
+              id: uuid(),
+              type: 'streamdeck:devices-data',
+              payload: { devices },
+              timestamp: Date.now(),
+            }));
+          } catch (err) {
+            ws.send(JSON.stringify({
+              id: uuid(),
+              type: 'streamdeck:devices-data',
+              payload: { devices: [], error: String(err) },
+              timestamp: Date.now(),
+            }));
+          }
+          return;
+        }
+
+        if (message.type === 'streamdeck:set-model') {
+          try {
+            const { model } = message.payload as { model: string };
+            if (!STREAM_DECK_MODELS[model as StreamDeckModelId]) {
+              throw new Error(`Unknown model: ${model}`);
+            }
+            const current = streamDeckConfig.getConfig();
+            const updated = resizeButtonsForModel(current, model as StreamDeckModelId);
+            streamDeckConfig.save(updated);
+            // Respond to sender
+            ws.send(JSON.stringify({
+              id: uuid(),
+              type: 'streamdeck:config-data',
+              payload: streamDeckConfig.getConfig(),
+              timestamp: Date.now(),
+            }));
+            // Broadcast to all panels
+            broadcastToAllPanels({
+              id: uuid(),
+              type: 'streamdeck:config-updated' as import('@mayday/types').BridgeMessageType,
+              payload: streamDeckConfig.getConfig(),
+              timestamp: Date.now(),
+            });
+          } catch (err) {
+            console.error('[StreamDeck] Set model error:', err);
+          }
+          return;
+        }
+
         // Panel identification
         if (message.type === 'panel:ready') {
           const payload = message.payload as { panelId?: string } | undefined;
@@ -508,5 +572,5 @@ Be concise, friendly, and focused on actionable editing advice. Reference the sp
     }, 5 * 60_000);
   }
 
-  return { server, wss, lifecycle, loader, eventBus, supabaseSync, streamDeckConfig, streamDeckHardware };
+  return { server, wss, lifecycle, loader, eventBus, supabaseSync, streamDeckConfig, streamDeckHardware, streamDeckWorkerManager, hotkeyService };
 }

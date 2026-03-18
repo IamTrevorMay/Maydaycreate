@@ -4,6 +4,12 @@ import type { BrowserWindow } from 'electron';
 import { autoUpdater } from 'electron-updater';
 import fs from 'fs';
 import path from 'path';
+import {
+  findOrCreateDraftRelease,
+  uploadReleaseAsset,
+  publishRelease,
+  generateLatestMacYml,
+} from './github-release';
 
 export interface UpdateCheckResult {
   updateAvailable: boolean;
@@ -299,16 +305,56 @@ export async function pushVersion(
     sendProgress(win, { phase: 'Building application', message: 'npm run build…', pct: 30, done: false });
     await runStep('npm', ['run', 'build'], sourceRepoPath, win, 'Building application');
 
-    // 5. Publish via electron-builder
-    sendProgress(win, { phase: 'Publishing release', message: 'Running electron-builder --publish always…', pct: 65, done: false });
+    // 5a. Build only (no publish) via electron-builder
+    sendProgress(win, { phase: 'Building release', message: 'Running electron-builder --publish never…', pct: 40, done: false });
     await runStep(
       'npx',
-      ['electron-builder', '--publish', 'always'],
+      ['electron-builder', '--publish', 'never'],
       launcherDir,
       win,
-      'Publishing release',
+      'Building release',
       tokenEnv,
     );
+
+    // 5b. Generate latest-mac.yml
+    const releaseDir = path.join(launcherDir, 'release');
+    sendProgress(win, { phase: 'Generating latest-mac.yml', message: 'Computing SHA-512 hashes…', pct: 55, done: false });
+    const ymlPath = await generateLatestMacYml(publishedVersion, releaseDir);
+    sendProgress(win, { phase: 'Generating latest-mac.yml', message: `Wrote ${ymlPath}`, pct: 58, done: false });
+
+    // 5c. Create draft GitHub release
+    sendProgress(win, { phase: 'Creating draft release', message: `Creating draft for v${publishedVersion}…`, pct: 58, done: false });
+    const release = await findOrCreateDraftRelease(publishedVersion, ghToken);
+    sendProgress(win, { phase: 'Creating draft release', message: `Draft release #${release.id} ready`, pct: 60, done: false });
+
+    // 5d. Upload assets with retry
+    const v = publishedVersion;
+    const assets = [
+      { file: `Mayday Create-${v}-arm64.dmg`, name: `Mayday-Create-${v}-arm64.dmg` },
+      { file: `Mayday Create-${v}-arm64-mac.zip`, name: `Mayday-Create-${v}-arm64-mac.zip` },
+      { file: `Mayday Create-${v}-arm64.dmg.blockmap`, name: `Mayday-Create-${v}-arm64.dmg.blockmap` },
+      { file: `Mayday Create-${v}-arm64-mac.zip.blockmap`, name: `Mayday-Create-${v}-arm64-mac.zip.blockmap` },
+      { file: 'latest-mac.yml', name: 'latest-mac.yml' },
+    ];
+
+    const uploadPctStart = 60;
+    const uploadPctEnd = 92;
+    for (let i = 0; i < assets.length; i++) {
+      const { file, name } = assets[i];
+      const filePath = path.join(releaseDir, file);
+      const basePct = uploadPctStart + ((uploadPctEnd - uploadPctStart) * i) / assets.length;
+
+      sendProgress(win, { phase: 'Uploading assets', message: `Uploading ${name} (${i + 1}/${assets.length})…`, pct: Math.round(basePct), done: false });
+
+      await uploadReleaseAsset(release, filePath, name, ghToken, (msg) => {
+        sendProgress(win, { phase: 'Uploading assets', message: msg, pct: Math.round(basePct), done: false });
+      });
+    }
+
+    // 5e. Un-draft (publish) the release
+    sendProgress(win, { phase: 'Publishing release', message: 'Un-drafting release…', pct: 92, done: false });
+    await publishRelease(release.id, ghToken);
+    sendProgress(win, { phase: 'Publishing release', message: `Release v${publishedVersion} is live!`, pct: 98, done: false });
 
     sendProgress(win, {
       phase: 'Complete',

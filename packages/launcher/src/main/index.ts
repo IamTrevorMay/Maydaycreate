@@ -3,7 +3,7 @@ import path from 'path';
 import fs from 'fs';
 import { is } from '@electron-toolkit/utils';
 import { loadConfig } from './config-store.js';
-import { startEmbeddedServer, getServerBridge } from './server-bridge.js';
+import { startEmbeddedServer, getServerBridge, stopEmbeddedServer } from './server-bridge.js';
 import {
   registerIpcHandlers,
   setSyncEngine,
@@ -248,6 +248,12 @@ app.whenReady().then(async () => {
       mainWindow?.show();
     }
   });
+});
+
+app.on('before-quit', () => {
+  // Stop the global key listener's native subprocess and HTTP server so
+  // the process exits cleanly — prevents the macOS "quit unexpectedly" dialog.
+  stopEmbeddedServer();
 });
 
 app.on('window-all-closed', () => {
