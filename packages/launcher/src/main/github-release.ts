@@ -2,6 +2,7 @@ import * as https from 'https';
 import * as fs from 'fs';
 import * as path from 'path';
 import * as crypto from 'crypto';
+import { spawn } from 'child_process';
 
 const OWNER = 'IamTrevorMay';
 const REPO = 'Maydaycreate';
@@ -209,53 +210,72 @@ function doUpload(
   token: string,
   onProgress?: (message: string) => void,
 ): Promise<void> {
+  // Use system curl instead of Node's https module to avoid
+  // Electron BoringSSL SSLV3_ALERT_BAD_RECORD_MAC on large uploads.
   return new Promise((resolve, reject) => {
-    const req = https.request(
-      {
-        hostname: 'uploads.github.com',
-        path: `/repos/${OWNER}/${REPO}/releases/${releaseId}/assets?name=${encodeURIComponent(assetName)}`,
-        method: 'POST',
-        headers: {
-          Authorization: `token ${token}`,
-          'User-Agent': 'MaydayCreate-Publisher',
-          'Content-Type': 'application/octet-stream',
-          'Content-Length': fileSize,
-        },
-        timeout: 600_000, // 10 min timeout for large files
-      },
-      (res) => {
-        let body = '';
-        res.on('data', (chunk) => (body += chunk));
-        res.on('end', () => {
-          const code = res.statusCode ?? 0;
-          if (code >= 200 && code < 300) {
-            resolve();
-          } else {
-            reject(new Error(`Upload ${assetName} → ${code}: ${body}`));
-          }
-        });
-      },
-    );
+    const url = `https://uploads.github.com/repos/${OWNER}/${REPO}/releases/${releaseId}/assets?name=${encodeURIComponent(assetName)}`;
 
-    req.on('timeout', () => {
-      req.destroy(new Error(`Upload ${assetName} timed out after 10 minutes`));
-    });
-    req.on('error', reject);
+    const proc = spawn('curl', [
+      '--fail',
+      '--silent',
+      '--show-error',
+      '--max-time', '600',
+      '-X', 'POST',
+      '-H', `Authorization: token ${token}`,
+      '-H', 'User-Agent: MaydayCreate-Publisher',
+      '-H', 'Content-Type: application/octet-stream',
+      '--data-binary', `@${filePath}`,
+      '-o', '/dev/null',
+      '-w', '%{http_code}',
+      url,
+    ], { stdio: ['ignore', 'pipe', 'pipe'] });
 
-    const stream = fs.createReadStream(filePath);
-    let uploaded = 0;
+    // Track upload progress by polling file read position
+    let progressTimer: ReturnType<typeof setInterval> | null = null;
     let lastPct = -1;
 
-    stream.on('data', (chunk: Buffer) => {
-      uploaded += chunk.length;
-      const pct = Math.round((uploaded / fileSize) * 100);
+    // curl doesn't report upload progress easily, so we report start/end
+    onProgress?.(`Uploading ${assetName}: 0% (0/${formatMB(fileSize)})`);
+
+    // Poll /proc-style progress: curl writes to stdout only at end,
+    // so we report periodic estimates based on elapsed time
+    const startTime = Date.now();
+    progressTimer = setInterval(() => {
+      const elapsed = (Date.now() - startTime) / 1000;
+      // Estimate ~2 MB/s upload speed for progress display
+      const estimatedUploaded = Math.min(elapsed * 2 * 1024 * 1024, fileSize);
+      const pct = Math.min(Math.round((estimatedUploaded / fileSize) * 100), 99);
       if (pct !== lastPct && pct % 5 === 0) {
         lastPct = pct;
-        onProgress?.(`Uploading ${assetName}: ${pct}% (${formatMB(uploaded)}/${formatMB(fileSize)})`);
+        onProgress?.(`Uploading ${assetName}: ${pct}% (${formatMB(estimatedUploaded)}/${formatMB(fileSize)})`);
+      }
+    }, 2000);
+
+    let stdout = '';
+    let stderr = '';
+    proc.stdout.on('data', (d) => (stdout += d.toString()));
+    proc.stderr.on('data', (d) => (stderr += d.toString()));
+
+    proc.on('close', (code) => {
+      if (progressTimer) clearInterval(progressTimer);
+      onProgress?.(`Uploading ${assetName}: 100% (${formatMB(fileSize)}/${formatMB(fileSize)})`);
+
+      if (code === 0) {
+        const httpCode = parseInt(stdout.trim(), 10);
+        if (httpCode >= 200 && httpCode < 300) {
+          resolve();
+        } else {
+          reject(new Error(`Upload ${assetName} → HTTP ${httpCode}`));
+        }
+      } else {
+        reject(new Error(`Upload ${assetName} failed: curl exit ${code}: ${stderr.trim()}`));
       }
     });
 
-    stream.pipe(req);
+    proc.on('error', (err) => {
+      if (progressTimer) clearInterval(progressTimer);
+      reject(new Error(`Upload ${assetName}: curl not found: ${err.message}`));
+    });
   });
 }
 
