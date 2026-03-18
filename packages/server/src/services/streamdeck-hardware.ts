@@ -1,3 +1,11 @@
+// TODO: Hardware control is currently disabled. To enable:
+//   1. npm install @elgato-stream-deck/node @napi-rs/canvas -w @mayday/server
+//   2. Run electron-rebuild to compile native modules for Electron's Node
+//   3. Add both packages to --external in the server tsup build script
+// Without electron-rebuild, the native .node binaries (node-hid, skia) segfault
+// inside Electron's runtime. The dynamic imports below gracefully degrade when
+// the packages are missing.
+
 import type { StreamDeckConfigService, StreamDeckConfig } from './streamdeck-config.js';
 import type { BridgeHandler } from '../bridge/handler.js';
 import { executeExcaliburCommand } from './excalibur-executor.js';
