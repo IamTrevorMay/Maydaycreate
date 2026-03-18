@@ -71,12 +71,12 @@ export class BridgeHandler {
     this.cep!.send(JSON.stringify(message));
   }
 
-  async callExtendScript(fn: string, args: unknown[] = []): Promise<unknown> {
+  async callExtendScript(fn: string, args: unknown[] = [], options?: { priority?: boolean }): Promise<unknown> {
     if (!this.isConnected()) {
       throw new Error('CEP panel not connected. Open Premiere Pro and the Mayday extension.');
     }
 
-    const message = createExtendScriptCall(fn, args);
+    const message = createExtendScriptCall(fn, args, options?.priority);
 
     return new Promise((resolve, reject) => {
       const timeout = setTimeout(() => {

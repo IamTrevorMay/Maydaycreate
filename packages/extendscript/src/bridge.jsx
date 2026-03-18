@@ -30,7 +30,11 @@ var MaydayBridge = (function () {
 
             var args = [];
             if (argsJson && argsJson !== "" && argsJson !== "[]") {
-                args = JSON.parse(argsJson);
+                try {
+                    args = JSON.parse(argsJson);
+                } catch (parseErr) {
+                    throw new Error("JSON.parse failed for " + moduleAndFn + ": " + String(argsJson).substring(0, 200));
+                }
             }
 
             return fn.apply(null, args);

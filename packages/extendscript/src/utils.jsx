@@ -29,7 +29,8 @@ var MaydayUtils = (function () {
             var result = fn();
             return JSON.stringify({ success: true, data: result });
         } catch (e) {
-            return JSON.stringify({ success: false, error: String(e) });
+            var msg = e.message ? e.message : String(e);
+            return JSON.stringify({ success: false, error: msg });
         }
     }
 

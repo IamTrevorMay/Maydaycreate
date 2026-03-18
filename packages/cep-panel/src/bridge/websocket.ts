@@ -71,7 +71,7 @@ export function useWebSocket(): WebSocketState {
       case 'extendscript:call': {
         const payload = message.payload as ExtendScriptCallPayload;
         try {
-          const result = await evalExtendScript(payload.fn, payload.args);
+          const result = await evalExtendScript(payload.fn, payload.args, payload.priority);
           ws.send(JSON.stringify({
             id: crypto.randomUUID(),
             type: 'extendscript:result',

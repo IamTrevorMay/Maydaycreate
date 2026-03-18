@@ -13,7 +13,7 @@ const POLL_INTERVAL = 500;
 const SNAPSHOT_RING_SIZE = 20;
 
 let db: CuttingBoardDB | null = null;
-let pollTimer: ReturnType<typeof setInterval> | null = null;
+let pollTimer: ReturnType<typeof setTimeout> | null = null;
 let currentSessionId: number | null = null;
 let previousSnapshot: TimelineSnapshot | null = null;
 let snapshotHistory: TimelineSnapshot[] = [];
@@ -51,7 +51,7 @@ function cleanup() {
   for (const sub of eventSubs) sub.unsubscribe();
   eventSubs = [];
   if (pollTimer) {
-    clearInterval(pollTimer);
+    clearTimeout(pollTimer);
     pollTimer = null;
   }
   previousSnapshot = null;
@@ -251,7 +251,13 @@ export default definePlugin({
           editCount = 0;
           previousSnapshot = null;
           snapshotHistory = [];
-          pollTimer = setInterval(() => pollTimeline(ctx), POLL_INTERVAL);
+          const schedulePoll = () => {
+            pollTimer = setTimeout(async () => {
+              await pollTimeline(ctx);
+              if (pollTimer !== null) schedulePoll();
+            }, POLL_INTERVAL);
+          };
+          schedulePoll();
           ctx.log.info(`Auto-started capture on "${seq.name}" (session ${currentSessionId})`);
         }
       } catch {
@@ -275,7 +281,7 @@ export default definePlugin({
 
   async deactivate(ctx) {
     if (pollTimer) {
-      clearInterval(pollTimer);
+      clearTimeout(pollTimer);
       pollTimer = null;
     }
     if (currentSessionId != null && db) {
@@ -315,8 +321,14 @@ export default definePlugin({
       previousSnapshot = null;
       snapshotHistory = [];
 
-      // Start polling
-      pollTimer = setInterval(() => pollTimeline(ctx), POLL_INTERVAL);
+      // Start polling (self-scheduling to prevent overlap)
+      const schedulePoll = () => {
+        pollTimer = setTimeout(async () => {
+          await pollTimeline(ctx);
+          if (pollTimer !== null) schedulePoll();
+        }, POLL_INTERVAL);
+      };
+      schedulePoll();
 
       ctx.log.info(`Capturing edits on "${seq.name}" (session ${currentSessionId})`);
       ctx.ui.showToast(`Capturing edits on "${seq.name}"`, 'success');
@@ -334,7 +346,7 @@ export default definePlugin({
         return null;
       }
 
-      clearInterval(pollTimer);
+      clearTimeout(pollTimer);
       pollTimer = null;
 
       if (db) {

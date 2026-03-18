@@ -26,6 +26,7 @@ export interface ExtendScriptCallPayload {
   script: string;
   fn: string;
   args: unknown[];
+  priority?: boolean;
 }
 
 export interface ExtendScriptResultPayload {

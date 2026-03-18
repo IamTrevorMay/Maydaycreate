@@ -175,8 +175,8 @@ export async function startServer(config: ServerConfig) {
         ? JSON.parse(fs.readFileSync(presetPath, 'utf-8'))
         : {};
 
-      // Find the selected clip
-      const clipInfo = await bridge.callExtendScript('effects.getSelectedClipInfo') as {
+      // Find the selected clip (priority: skip ahead of polling)
+      const clipInfo = await bridge.callExtendScript('effects.getSelectedClipInfo', [], { priority: true }) as {
         trackIndex: number; clipIndex: number; trackType: string; clipName: string;
       } | null;
 
@@ -224,7 +224,7 @@ export async function startServer(config: ServerConfig) {
           const result = await bridge.callExtendScript('effects.applyEffects', [
             clipInfo.trackIndex, clipInfo.clipIndex, clipInfo.trackType,
             JSON.stringify(effectsDefs),
-          ]);
+          ], { priority: true });
           results.push(`Applied preset "${cmdName}": ${JSON.stringify(result)}`);
 
         } else if (cmdID === 'fxcl.') {
@@ -267,7 +267,7 @@ export async function startServer(config: ServerConfig) {
               const result = await bridge.callExtendScript('effects.applyEffects', [
                 clipInfo.trackIndex, clipInfo.clipIndex, clipInfo.trackType,
                 JSON.stringify(effectsDef),
-              ]);
+              ], { priority: true });
               results.push(`Set ${propName}: ${JSON.stringify(result)}`);
             } else {
               results.push(`No value for ${propName}`);
@@ -293,7 +293,7 @@ export async function startServer(config: ServerConfig) {
               const result = await bridge.callExtendScript('effects.applyEffects', [
                 clipInfo.trackIndex, clipInfo.clipIndex, clipInfo.trackType,
                 JSON.stringify(effectsDefs),
-              ]);
+              ], { priority: true });
               results.push(`Applied "${cmdName}": ${JSON.stringify(result)}`);
             } else {
               results.push(`Preset "${cmdName}" not found`);
