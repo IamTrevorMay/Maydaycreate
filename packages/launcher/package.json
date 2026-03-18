@@ -75,7 +75,9 @@
         "from": "../../tools/streamdeck-worker",
         "to": "streamdeck-worker",
         "filter": [
-          "**/*"
+          "**/*",
+          "!**/node_modules/**",
+          "!**/.bin/**"
         ]
       }
     ],
