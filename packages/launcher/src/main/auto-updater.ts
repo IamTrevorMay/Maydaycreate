@@ -197,7 +197,19 @@ export async function downloadAndInstallUpdate(): Promise<void> {
   if (_updating) throw new Error('Update already in progress');
   _updating = true;
   try {
-    await autoUpdater.downloadUpdate();
+    if (_win && !_win.isDestroyed()) {
+      sendProgress(_win, {
+        phase: 'Downloading update',
+        message: 'Connecting to update server…',
+        pct: 0,
+        done: false,
+      });
+    }
+
+    const timeout = new Promise<never>((_, reject) =>
+      setTimeout(() => reject(new Error('Update download timed out after 120s')), 120_000),
+    );
+    await Promise.race([autoUpdater.downloadUpdate(), timeout]);
   } finally {
     _updating = false;
   }

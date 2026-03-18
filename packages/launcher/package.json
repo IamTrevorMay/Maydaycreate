@@ -51,9 +51,15 @@
     },
     "files": [
       "out/**/*",
-      "resources/**/*"
+      "resources/**/*",
+      "!**/node_modules/.bin/**"
     ],
-    "asar": false,
+    "asar": true,
+    "asarUnpack": [
+      "**/*.node",
+      "**/better-sqlite3/**",
+      "**/node_modules/gpu.js/**"
+    ],
     "extraResources": [
       {
         "from": "../../plugins",
@@ -61,7 +67,8 @@
         "filter": [
           "**/*",
           "!**/node_modules/**",
-          "!**/.mayday-build/**"
+          "!**/.mayday-build/**",
+          "!**/.bin/**"
         ]
       },
       {

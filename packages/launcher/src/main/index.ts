@@ -33,15 +33,14 @@ if (app.isPackaged) {
     process.env.PATH = [...missing, current].join(':');
   }
 
-  // Symlink app's node_modules into the plugins directory so ESM imports resolve
-  const appNodeModules = path.join(process.resourcesPath, 'app', 'node_modules');
-  const pluginsNodeModules = path.join(process.resourcesPath, 'plugins', 'node_modules');
-  if (fs.existsSync(appNodeModules) && !fs.existsSync(pluginsNodeModules)) {
-    try {
-      fs.symlinkSync(appNodeModules, pluginsNodeModules, 'dir');
-    } catch {
-      // If symlink fails (permissions), copy won't work either — plugins will degrade gracefully
-    }
+  // Add app's node_modules to NODE_PATH so plugin ESM imports resolve.
+  // With asar packing, we can't symlink into the archive — use NODE_PATH instead.
+  const appNodeModules = path.join(app.getAppPath(), 'node_modules');
+  const nodePath = process.env.NODE_PATH || '';
+  if (!nodePath.includes(appNodeModules)) {
+    process.env.NODE_PATH = nodePath ? `${nodePath}:${appNodeModules}` : appNodeModules;
+    // @ts-ignore — Module._initPaths re-reads NODE_PATH at runtime
+    require('module')._initPaths();
   }
 }
 
