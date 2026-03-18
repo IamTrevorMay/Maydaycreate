@@ -11,6 +11,7 @@ export default defineConfig({
       input: {
         main: 'index.html',
         training: 'training.html',
+        streamdeck: 'streamdeck.html',
       },
     },
   },

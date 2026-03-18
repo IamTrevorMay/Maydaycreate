@@ -19,8 +19,10 @@ import type { SyncSource } from '@mayday/sync-engine';
 import { YouTubeAnalyzer } from './youtube/youtube-analyzer.js';
 import { YouTubeSyncService } from './youtube/youtube-sync.js';
 import { PresetSyncService } from './preset-sync.js';
+import { StreamDeckSyncService } from './streamdeck-sync.js';
 import { initAutoUpdater, silentAutoUpdate } from './auto-updater.js';
-import { installStreamDeckPlugin } from './stream-deck-installer.js';
+// Old Elgato SDK plugin installer — replaced by direct USB hardware control
+// import { installStreamDeckPlugin } from './stream-deck-installer.js';
 
 // Augment PATH for Dock-launched apps (they don't inherit shell PATH)
 if (app.isPackaged) {
@@ -93,6 +95,7 @@ function createWindow(): BrowserWindow {
       win.show();
     }
   });
+
 
   win.webContents.setWindowOpenHandler(({ url }) => {
     shell.openExternal(url);
@@ -210,6 +213,17 @@ app.whenReady().then(async () => {
 
   presetSync.startPeriodicSync();
 
+  // Stream Deck config → Supabase bidirectional sync
+  const streamDeckSync = new StreamDeckSyncService();
+  streamDeckSync.initialize({
+    supabaseUrl: config.supabaseUrl,
+    supabaseAnonKey: config.supabaseAnonKey,
+    machineId: config.machineId,
+    machineName: config.machineName,
+    configFilePath: path.join(app.getPath('userData'), 'plugin-data', 'streamdeck-config.json'),
+  });
+  streamDeckSync.startPeriodicSync();
+
   // If sync source is configured, start a sync
   if (config.syncSourcePath) {
     syncEngine.runSync().catch(err => {
@@ -217,8 +231,7 @@ app.whenReady().then(async () => {
     });
   }
 
-  // Install/update Stream Deck plugin if Stream Deck is present
-  installStreamDeckPlugin();
+  // Old Elgato SDK plugin installer removed — now using direct USB hardware control
 
   // Auto-updater: wire electron-updater events to renderer
   initAutoUpdater(mainWindow);
