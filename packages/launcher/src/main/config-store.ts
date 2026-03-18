@@ -34,7 +34,17 @@ const DEFAULTS: LauncherConfig = {
 };
 
 function getConfigPath(): string {
-  return path.join(app.getPath('userData'), 'launcher-config.json');
+  const primary = path.join(app.getPath('userData'), 'launcher-config.json');
+  if (fs.existsSync(primary)) return primary;
+
+  // In dev mode, userData is "Electron" — fall back to the packaged app's config
+  const packaged = path.join(app.getPath('home'), 'Library', 'Application Support', '@mayday', 'launcher', 'launcher-config.json');
+  if (fs.existsSync(packaged)) {
+    console.log('[Config] Using packaged app config:', packaged);
+    return packaged;
+  }
+
+  return primary;
 }
 
 let _config: LauncherConfig | null = null;
