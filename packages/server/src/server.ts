@@ -553,6 +553,26 @@ Be concise, friendly, and focused on actionable editing advice. Reference the sp
 
     // Periodic sync for rating updates, session endings, boosts
     supabaseSync.startPeriodicSync(lifecycle, 30000);
+
+    // Push model to cloud when trained
+    eventBus.on('plugin:cutting-board:model-trained', () => {
+      supabaseSync.pushModel(lifecycle).catch(err => {
+        console.error('[SupabaseSync] Model push error:', err);
+      });
+    });
+
+    // Pull best cloud model on startup (10s delay) and every 5 minutes
+    setTimeout(() => {
+      supabaseSync.pullBestModel(lifecycle).catch(err => {
+        console.error('[SupabaseSync] Model pull error:', err);
+      });
+    }, 10_000);
+
+    setInterval(() => {
+      supabaseSync.pullBestModel(lifecycle).catch(err => {
+        console.error('[SupabaseSync] Periodic model pull error:', err);
+      });
+    }, 5 * 60_000);
   }
 
   return { server, wss, lifecycle, loader, eventBus, supabaseSync };

@@ -499,7 +499,40 @@ export default definePlugin({
       ctx.log.info(msg);
       ctx.ui.showToast(msg, 'success');
 
+      // Notify server so it can push to Supabase
+      ctx.ui.pushToPanel('model-trained', { version, accuracy, trainingSize: examples.length });
+
       return { version, accuracy, trainingSize: examples.length, regressors: Object.keys(regressorJsons) };
+    },
+
+    'get-model-data': async (ctx) => {
+      const serialized = loadModel(ctx.dataDir);
+      if (!serialized) return null;
+      return serialized;
+    },
+
+    'set-cloud-model': async (ctx, args) => {
+      const cloudModel = args as unknown as SerializedModel;
+      if (!cloudModel?.classifier) return { accepted: false, reason: 'invalid model' };
+
+      const local = loadModel(ctx.dataDir);
+
+      if (local) {
+        // Compare: prefer accuracy > training size > recency
+        if (cloudModel.accuracy < local.accuracy) {
+          return { accepted: false, reason: 'local accuracy is higher' };
+        }
+        if (cloudModel.accuracy === local.accuracy && cloudModel.trainingSize < local.trainingSize) {
+          return { accepted: false, reason: 'local has more training data' };
+        }
+        if (cloudModel.accuracy === local.accuracy && cloudModel.trainingSize === local.trainingSize && cloudModel.trainedAt <= local.trainedAt) {
+          return { accepted: false, reason: 'local is same or newer' };
+        }
+      }
+
+      saveModel(cloudModel, ctx.dataDir);
+      ctx.log.info(`Accepted cloud model v${cloudModel.version}: ${(cloudModel.accuracy * 100).toFixed(1)}% accuracy, ${cloudModel.trainingSize} examples`);
+      return { accepted: true, version: cloudModel.version };
     },
 
     'start-autocut': async (ctx) => {

@@ -203,6 +203,103 @@ export class SupabaseSyncService {
     }
   }
 
+  async pushModel(lifecycle: PluginLifecycle): Promise<boolean> {
+    if (!this.client || !this.config) return false;
+
+    try {
+      const model = await lifecycle.executeCommand('cutting-board', 'get-model-data') as {
+        version: number;
+        trainedAt: number;
+        trainingSize: number;
+        accuracy: number;
+        classifier: object;
+        regressors: Record<string, object>;
+      } | null;
+
+      if (!model) {
+        console.log('[SupabaseSync] No model to push');
+        return false;
+      }
+
+      const { error } = await this.client
+        .from('autocut_models')
+        .upsert({
+          machine_id: this.config.machineId,
+          machine_name: this.config.machineName,
+          version: model.version,
+          trained_at: model.trainedAt,
+          training_size: model.trainingSize,
+          accuracy: model.accuracy,
+          model_json: { classifier: model.classifier, regressors: model.regressors },
+          uploaded_at: new Date().toISOString(),
+        }, { onConflict: 'machine_id,version' });
+
+      if (error) {
+        console.error('[SupabaseSync] Model push error:', error.message);
+        return false;
+      }
+
+      console.log(`[SupabaseSync] Pushed model v${model.version} (${(model.accuracy * 100).toFixed(1)}% accuracy, ${model.trainingSize} examples)`);
+      return true;
+    } catch (err) {
+      console.error('[SupabaseSync] pushModel error:', err);
+      return false;
+    }
+  }
+
+  async pullBestModel(lifecycle: PluginLifecycle): Promise<boolean> {
+    if (!this.client || !this.config) return false;
+
+    try {
+      // Query best model from other machines: highest accuracy, most training data, most recent
+      const { data, error } = await this.client
+        .from('autocut_models')
+        .select('*')
+        .neq('machine_id', this.config.machineId)
+        .order('accuracy', { ascending: false })
+        .order('training_size', { ascending: false })
+        .order('trained_at', { ascending: false })
+        .limit(1)
+        .single();
+
+      if (error || !data) {
+        // No models from other machines — that's fine
+        if (error?.code !== 'PGRST116') { // PGRST116 = no rows
+          console.log('[SupabaseSync] No cloud models available');
+        }
+        return false;
+      }
+
+      const modelJson = data.model_json as { classifier: object; regressors: Record<string, object> };
+
+      const cloudModel = {
+        version: data.version as number,
+        trainedAt: data.trained_at as number,
+        trainingSize: data.training_size as number,
+        accuracy: data.accuracy as number,
+        classifier: modelJson.classifier,
+        regressors: modelJson.regressors,
+      };
+
+      const result = await lifecycle.executeCommand('cutting-board', 'set-cloud-model', cloudModel) as {
+        accepted: boolean;
+        reason?: string;
+        version?: number;
+      } | null;
+
+      if (result?.accepted) {
+        console.log(`[SupabaseSync] Accepted cloud model v${cloudModel.version} from ${data.machine_name} (${(cloudModel.accuracy * 100).toFixed(1)}% accuracy)`);
+        return true;
+      } else {
+        console.log(`[SupabaseSync] Skipped cloud model: ${result?.reason ?? 'unknown'}`);
+        return false;
+      }
+    } catch (err) {
+      console.error('[SupabaseSync] pullBestModel error:', err);
+      return false;
+    }
+  }
+
   startPeriodicSync(lifecycle: PluginLifecycle, intervalMs = 30000): void {
     if (this.syncTimer) return;
     if (!this.client) return;
