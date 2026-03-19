@@ -1,6 +1,6 @@
 {
   "name": "@mayday/launcher",
-  "version": "0.1.17",
+  "version": "0.1.18",
   "private": true,
   "description": "Plugin development platform for Adobe Premiere Pro",
   "author": "Mayday",
@@ -56,6 +56,7 @@
     ],
     "asar": true,
     "asarUnpack": [
+      "**/*.node",
       "node_modules/@esbuild/**",
       "node_modules/esbuild/**",
       "node_modules/@mayday/sdk/**",
