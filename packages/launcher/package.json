@@ -1,6 +1,6 @@
 {
   "name": "@mayday/launcher",
-  "version": "0.1.16",
+  "version": "0.1.17",
   "private": true,
   "description": "Plugin development platform for Adobe Premiere Pro",
   "author": "Mayday",
@@ -54,7 +54,18 @@
       "resources/**/*",
       "!**/node_modules/.bin/**"
     ],
-    "asar": false,
+    "asar": true,
+    "asarUnpack": [
+      "node_modules/@esbuild/**",
+      "node_modules/esbuild/**",
+      "node_modules/@mayday/sdk/**",
+      "node_modules/@mayday/types/**",
+      "node_modules/better-sqlite3/**",
+      "node_modules/brain.js/**",
+      "node_modules/gpu.js/**",
+      "node_modules/gpu-mock.js/**",
+      "node_modules/webgpu/**"
+    ],
     "extraResources": [
       {
         "from": "../../plugins",
@@ -97,7 +108,9 @@
       "hardenedRuntime": true,
       "entitlements": "build/entitlements.mac.plist",
       "entitlementsInherit": "build/entitlements.mac.plist",
-      "notarize": true
+      "notarize": {
+        "teamId": "XF99392HXQ"
+      }
     },
     "dmg": {
       "title": "Mayday Create",

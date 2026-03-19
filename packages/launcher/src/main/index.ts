@@ -34,7 +34,10 @@ if (app.isPackaged) {
   }
 
   // Symlink app's node_modules into the plugins directory so ESM imports resolve
-  const appNodeModules = path.join(process.resourcesPath, 'app', 'node_modules');
+  // With asar enabled, real files are in app.asar.unpacked/; fall back to app/ for dev
+  const unpackedNM = path.join(process.resourcesPath, 'app.asar.unpacked', 'node_modules');
+  const plainNM = path.join(process.resourcesPath, 'app', 'node_modules');
+  const appNodeModules = fs.existsSync(unpackedNM) ? unpackedNM : plainNM;
   const pluginsNodeModules = path.join(process.resourcesPath, 'plugins', 'node_modules');
   if (fs.existsSync(appNodeModules) && !fs.existsSync(pluginsNodeModules)) {
     try {
@@ -42,6 +45,22 @@ if (app.isPackaged) {
     } catch {
       // If symlink fails (permissions), plugins will degrade gracefully
     }
+  }
+
+  // Set ESBUILD_BINARY_PATH before the server loads esbuild's module.
+  // esbuild caches the env var at module load time, so it must be set early.
+  if (fs.existsSync(unpackedNM)) {
+    const esbuildBin = path.join(unpackedNM, '@esbuild', `${process.platform}-${process.arch}`, 'bin', 'esbuild');
+    if (fs.existsSync(esbuildBin)) {
+      process.env.ESBUILD_BINARY_PATH = esbuildBin;
+    }
+
+    // Add the asar's node_modules to NODE_PATH so unpacked packages can
+    // resolve their CJS dependencies that remain inside the asar.
+    const asarNM = path.join(process.resourcesPath, 'app.asar', 'node_modules');
+    process.env.NODE_PATH = [asarNM, process.env.NODE_PATH].filter(Boolean).join(':');
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    require('module').Module._initPaths();
   }
 }
 

@@ -73,10 +73,26 @@ export class PluginLifecycle {
           while (dir !== path.dirname(dir)) {
             const nm = path.join(dir, 'node_modules');
             if (fs.existsSync(path.join(nm, '@mayday', 'sdk'))) {
-              nodeModulesDirs.push(nm);
+              // If inside an asar archive, esbuild can't read from it — use the unpacked path
+              const resolvedNm = nm.includes('app.asar')
+                ? nm.replace('app.asar', 'app.asar.unpacked')
+                : nm;
+              nodeModulesDirs.push(resolvedNm);
               break;
             }
             dir = path.dirname(dir);
+          }
+
+          // When running from an asar archive, point esbuild to its unpacked native binary
+          if (nodeModulesDirs[0]?.includes('app.asar.unpacked') && !process.env.ESBUILD_BINARY_PATH) {
+            const esbuildBin = path.join(
+              nodeModulesDirs[0], '@esbuild',
+              `${process.platform}-${process.arch}`,
+              'bin', 'esbuild',
+            );
+            if (fs.existsSync(esbuildBin)) {
+              process.env.ESBUILD_BINARY_PATH = esbuildBin;
+            }
           }
 
           await build({
