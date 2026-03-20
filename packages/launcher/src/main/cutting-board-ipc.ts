@@ -252,8 +252,6 @@ function getTrainingRuns(): CuttingBoardTrainingRun[] {
 }
 
 export function registerCuttingBoardHandlers(): void {
-  const debugLog = '/tmp/mayday-cb-debug.log';
-  fs.writeFileSync(debugLog, `registerCuttingBoardHandlers called at ${new Date().toISOString()}\n`);
   try {
 
   ipcMain.handle('cuttingBoard:getAggregateStats', async () => {
@@ -363,25 +361,14 @@ export function registerCuttingBoardHandlers(): void {
     }
 
     const url = `http://localhost:${config.serverPort}/api/plugins/cutting-board/command/train-model`;
-    let res: Response;
-    try {
-      res = await fetch(url, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ joinedExamples }),
-      });
-    } catch (err) {
-      const msg = `Train model fetch failed: ${(err as Error).message}`;
-      fs.appendFileSync('/tmp/mayday-train-debug.log', `${new Date().toISOString()} ${msg}\n`);
-      throw new Error(msg);
-    }
-    const rawText = await res.text();
-    fs.appendFileSync('/tmp/mayday-train-debug.log', `${new Date().toISOString()} status=${res.status} body=${rawText.slice(0, 500)}\n`);
+    const res = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ joinedExamples }),
+    });
     if (!res.ok) throw new Error(`Train model failed: ${res.status}`);
-    const data = JSON.parse(rawText);
-    const result = data.success ? data.result : data;
-    fs.appendFileSync('/tmp/mayday-train-debug.log', `${new Date().toISOString()} returning: ${JSON.stringify(result).slice(0, 200)}\n`);
-    return result;
+    const data = await res.json();
+    return data.success ? data.result : data;
   });
 
   ipcMain.handle('cuttingBoard:cloudMergeTrain', async (_e, localResult: { version: number; accuracy: number; trainingSize: number }) => {
@@ -498,22 +485,21 @@ export function registerCuttingBoardHandlers(): void {
     console.log(`[CloudMerge] Total cloud examples: ${cloudExamples.length} (${teRows?.length ?? 0} training_examples + ${crRows?.length ?? 0} cut_records + ${jRows?.length ?? 0} joined)`);
 
     // 4. Retrain from the combined cloud dataset
-    const trainBody = JSON.stringify({ examples: cloudExamples, label: 'cloud-merge' });
-    fs.appendFileSync('/tmp/mayday-train-debug.log', `${new Date().toISOString()} [CloudMerge] Sending ${cloudExamples.length} examples (${(trainBody.length / 1024).toFixed(0)}kb) to train-from-examples\n`);
+    console.log(`[CloudMerge] Sending ${cloudExamples.length} examples to train-from-examples`);
 
     const trainRes = await fetch(`${serverBase}/train-from-examples`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: trainBody,
+      body: JSON.stringify({ examples: cloudExamples, label: 'cloud-merge' }),
     });
-    const trainRawText = await trainRes.text();
-    fs.appendFileSync('/tmp/mayday-train-debug.log', `${new Date().toISOString()} [CloudMerge] train-from-examples status=${trainRes.status} body=${trainRawText.slice(0, 300)}\n`);
-
-    if (!trainRes.ok) throw new Error(`Cloud retrain failed (${trainRes.status}): ${trainRawText.slice(0, 200)}`);
-    const trainData = JSON.parse(trainRawText);
+    if (!trainRes.ok) {
+      const errText = await trainRes.text();
+      throw new Error(`Cloud retrain failed (${trainRes.status}): ${errText.slice(0, 200)}`);
+    }
+    const trainData = await trainRes.json();
     const cloudResult = trainData.success ? trainData.result : null;
 
-    if (!cloudResult) throw new Error(`Cloud retrain returned no result: ${trainRawText.slice(0, 200)}`);
+    if (!cloudResult) throw new Error('Cloud retrain returned no result');
 
     // 5. Push the cloud-trained model to autocut_models
     const modelRes = await fetch(`${serverBase}/get-model-data`, {
@@ -650,8 +636,7 @@ export function registerCuttingBoardHandlers(): void {
     return { pushed: 0, error: 'Supabase not configured' };
   });
 
-  fs.appendFileSync(debugLog, `All handlers registered OK\n`);
   } catch (err) {
-    fs.appendFileSync(debugLog, `ERROR: ${(err as Error).stack || err}\n`);
+    console.error('[CuttingBoard] Handler registration error:', err);
   }
 }
