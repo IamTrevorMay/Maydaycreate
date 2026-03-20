@@ -280,6 +280,10 @@ export default definePlugin({
     eventSubs.push(ctx.onEvent('plugin:cutting-board:set-video-id', (data) => {
       const { videoId: raw } = data as { videoId: string };
       currentVideoId = parseVideoId(raw);
+      // Update the current session's video_id if one is active
+      if (currentSessionId != null && db && currentVideoId) {
+        db.updateSessionVideoId(currentSessionId, currentVideoId);
+      }
       ctx.log.info(`Video ID set: "${currentVideoId}"`);
     }));
 
@@ -830,6 +834,228 @@ export default definePlugin({
       }
 
       return { success, editType: suggestion.editType };
+    },
+
+    'scan-autocut': async (ctx) => {
+      // Phase 1: Load model and scan all clips, return planned edits for confirmation
+      const serialized = loadModel(ctx.dataDir);
+      if (!serialized) {
+        ctx.ui.showToast('No trained model — run Train Model first', 'warning');
+        return null;
+      }
+
+      const classifier = instantiateNet(serialized.classifier);
+      const regressors = new Map<string, unknown>();
+      for (const [editType, json] of Object.entries(serialized.regressors)) {
+        regressors.set(editType, instantiateNet(json));
+      }
+
+      const seq = await ctx.services.timeline.getActiveSequence();
+      if (!seq) {
+        ctx.ui.showToast('No active sequence', 'warning');
+        return null;
+      }
+
+      // Gather all clips across all video tracks
+      const allClips: Array<{
+        trackIndex: number;
+        trackType: 'video' | 'audio';
+        clipIndex: number;
+        clip: { name: string; start: number; end: number; duration: number; trackIndex: number; trackType: string };
+      }> = [];
+
+      for (const track of seq.videoTracks) {
+        for (let i = 0; i < track.clips.length; i++) {
+          const clip = track.clips[i];
+          allClips.push({
+            trackIndex: track.index,
+            trackType: 'video',
+            clipIndex: i,
+            clip: { name: clip.name, start: clip.start, end: clip.end, duration: clip.duration, trackIndex: track.index, trackType: 'video' },
+          });
+        }
+      }
+
+      // Run inference on every clip (using midpoint as playhead position)
+      const recentEdits: Array<{ editType: string; timestamp: number; quality: string }> = [];
+      const planned: Array<{
+        editType: string;
+        confidence: number;
+        parameters: import('./autocut-types.js').EditParameters;
+        clipName: string;
+        clipStart: number;
+        trackIndex: number;
+        trackType: string;
+        clipIndex: number;
+      }> = [];
+
+      for (const entry of allClips) {
+        const c = entry.clip;
+        const neighborBefore = entry.clipIndex > 0 ? seq.videoTracks[entry.trackIndex]?.clips[entry.clipIndex - 1] ?? null : null;
+        const neighborAfter = entry.clipIndex < (seq.videoTracks[entry.trackIndex]?.clips.length ?? 0) - 1
+          ? seq.videoTracks[entry.trackIndex]?.clips[entry.clipIndex + 1] ?? null : null;
+
+        const playhead = c.start + c.duration * 0.5;
+        const input = buildInferenceInput(
+          c as any, playhead, recentEdits,
+          neighborBefore as any, neighborAfter as any,
+        );
+
+        const suggestion = runInference(input, classifier, regressors, {
+          trackIndex: entry.trackIndex,
+          trackType: entry.trackType,
+          clipIndex: entry.clipIndex,
+          name: c.name,
+          start: c.start,
+          end: c.end,
+          duration: c.duration,
+        }, autocutThreshold);
+
+        if (suggestion) {
+          planned.push({
+            editType: suggestion.editType,
+            confidence: suggestion.confidence,
+            parameters: suggestion.parameters,
+            clipName: c.name,
+            clipStart: c.start,
+            trackIndex: entry.trackIndex,
+            trackType: entry.trackType,
+            clipIndex: entry.clipIndex,
+          });
+
+          // Feed back into recent edits for context
+          recentEdits.push({ editType: suggestion.editType, timestamp: Date.now(), quality: 'good' });
+        }
+      }
+
+      const avgConfidence = planned.length > 0
+        ? planned.reduce((s, p) => s + p.confidence, 0) / planned.length
+        : 0;
+
+      ctx.log.info(`[Autocut] Scanned ${allClips.length} clips, planned ${planned.length} edits (avg confidence: ${(avgConfidence * 100).toFixed(1)}%)`);
+
+      return {
+        sequenceName: seq.name,
+        totalClips: allClips.length,
+        plannedEdits: planned.length,
+        avgConfidence,
+        edits: planned,
+        modelVersion: serialized.version,
+        modelAccuracy: serialized.accuracy,
+      };
+    },
+
+    'execute-autocut': async (ctx, args) => {
+      // Phase 2: Duplicate sequence, then execute all planned edits in reverse order
+      const { edits } = args as { edits: Array<{
+        editType: string;
+        confidence: number;
+        parameters: import('./autocut-types.js').EditParameters;
+        clipName: string;
+        clipStart: number;
+        trackIndex: number;
+        trackType: string;
+        clipIndex: number;
+      }> };
+
+      if (!edits || edits.length === 0) {
+        ctx.ui.showToast('No edits to execute', 'warning');
+        return null;
+      }
+
+      const { timeline } = ctx.services;
+
+      // Step 1: Duplicate sequence as backup
+      ctx.ui.showToast('Creating backup sequence...', 'info');
+      const backup = await timeline.duplicateSequence();
+      if (!backup) {
+        ctx.ui.showToast('Failed to duplicate sequence — aborting', 'error');
+        return null;
+      }
+      ctx.log.info(`[Autocut] Backup created: "${backup.backupName}"`);
+
+      // Step 2: Execute edits in reverse order (highest clipStart first)
+      // This prevents earlier edits from shifting clip indices of later ones
+      const sorted = [...edits].sort((a, b) => b.clipStart - a.clipStart);
+
+      let executed = 0;
+      let failed = 0;
+
+      for (const edit of sorted) {
+        // Re-fetch sequence to get fresh clip indices after each edit
+        const seq = await timeline.getActiveSequence();
+        if (!seq) { failed++; continue; }
+
+        // Find the clip by matching start time (indices may have shifted)
+        const tracks = seq.videoTracks;
+        const track = tracks.find(t => t.index === edit.trackIndex);
+        if (!track) { failed++; continue; }
+
+        let clipIndex = -1;
+        for (let i = 0; i < track.clips.length; i++) {
+          if (Math.abs(track.clips[i].start - edit.clipStart) < 0.01) {
+            clipIndex = i;
+            break;
+          }
+        }
+        if (clipIndex < 0) { failed++; continue; }
+
+        const clip = track.clips[clipIndex];
+        let success = false;
+
+        try {
+          switch (edit.editType) {
+            case 'cut': {
+              const splitRatio = (edit.parameters.splitRatio as number) ?? 0.5;
+              const splitTime = clip.start + splitRatio * clip.duration;
+              success = await timeline.splitClip(edit.trackIndex, clipIndex, 'video', splitTime);
+              break;
+            }
+            case 'trim-head': {
+              const trimAmount = (edit.parameters.trimAmount as number) ?? clip.duration * 0.1;
+              success = await (timeline as any).setClipInOutPoints(edit.trackIndex, clipIndex, 'video', clip.inPoint + trimAmount, clip.outPoint);
+              break;
+            }
+            case 'trim-tail': {
+              const trimAmount = (edit.parameters.trimAmount as number) ?? clip.duration * 0.1;
+              success = await (timeline as any).setClipInOutPoints(edit.trackIndex, clipIndex, 'video', clip.inPoint, clip.outPoint - trimAmount);
+              break;
+            }
+            case 'delete': {
+              if (edit.parameters.ripple) {
+                success = await timeline.rippleDelete(edit.trackIndex, clipIndex, 'video');
+              } else {
+                success = await timeline.liftClip(edit.trackIndex, clipIndex, 'video');
+              }
+              break;
+            }
+            default:
+              ctx.log.warn(`[Autocut] Skipping unsupported edit type: ${edit.editType}`);
+              continue;
+          }
+        } catch (err) {
+          ctx.log.error(`[Autocut] Failed to execute ${edit.editType} on "${edit.clipName}":`, err);
+          failed++;
+          continue;
+        }
+
+        if (success) {
+          executed++;
+        } else {
+          failed++;
+        }
+      }
+
+      const msg = `Autocut complete: ${executed} edits applied${failed > 0 ? `, ${failed} failed` : ''}. Backup: "${backup.backupName}"`;
+      ctx.log.info(`[Autocut] ${msg}`);
+      ctx.ui.showToast(msg, executed > 0 ? 'success' : 'warning');
+
+      return {
+        executed,
+        failed,
+        total: edits.length,
+        backupName: backup.backupName,
+      };
     },
   },
 });

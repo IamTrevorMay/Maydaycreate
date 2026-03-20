@@ -63,4 +63,8 @@ export class TimelineService {
   async getProjectBinItems(): Promise<ProjectBinItem[]> {
     return await this.bridge.callExtendScript('timeline.getProjectBinItems') as ProjectBinItem[];
   }
+
+  async duplicateSequence(): Promise<{ originalName: string; backupName: string } | null> {
+    return await this.bridge.callExtendScript('timeline.duplicateSequence') as { originalName: string; backupName: string } | null;
+  }
 }

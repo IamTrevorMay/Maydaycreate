@@ -24,6 +24,7 @@ export function useCuttingBoard() {
   const [postTrainResult, setPostTrainResult] = useState<LocalTrainResult | null>(null);
   const [merging, setMerging] = useState(false);
   const [mergeResult, setMergeResult] = useState<CloudMergeResult | null>(null);
+  const [mergeError, setMergeError] = useState('');
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   const refresh = useCallback(async () => {
@@ -72,12 +73,15 @@ export function useCuttingBoard() {
   const cloudMergeTrain = useCallback(async () => {
     if (!postTrainResult) return;
     setMerging(true);
+    setMergeError('');
     try {
       const result = await ipc.cuttingBoard.cloudMergeTrain(postTrainResult);
       setMergeResult(result);
       await refresh();
     } catch (err) {
-      console.error('[CuttingBoard] cloudMergeTrain error:', err);
+      const msg = (err as Error).message || String(err);
+      console.error('[CuttingBoard] cloudMergeTrain error:', msg);
+      setMergeError(msg);
     } finally {
       setMerging(false);
     }
@@ -90,6 +94,6 @@ export function useCuttingBoard() {
 
   return {
     stats, trainingRuns, training, trainModel, refresh,
-    postTrainResult, merging, mergeResult, cloudMergeTrain, dismissPostTrain,
+    postTrainResult, merging, mergeResult, mergeError, cloudMergeTrain, dismissPostTrain,
   };
 }

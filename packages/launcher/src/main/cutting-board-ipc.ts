@@ -304,48 +304,84 @@ export function registerCuttingBoardHandlers(): void {
   ipcMain.handle('cuttingBoard:trainModel', async () => {
     const config = loadConfig();
 
-    // Fetch joined examples from Supabase to augment local training data
+    // Fetch training data from Supabase to augment local training data
     let joinedExamples: Array<{ editType: string; quality: string; weight: number; timestamp: number; tags: string[] }> = [];
     if (config.supabaseUrl && config.supabaseAnonKey) {
       try {
         const supabase = createClient(config.supabaseUrl, config.supabaseAnonKey);
-        const { data: rows } = await supabase
+
+        // Pull cut_records from Supabase (these may not exist in the local plugin DB)
+        const { data: cutRows } = await supabase
+          .from('cut_records')
+          .select('edit_type, edit_point_time, rating, boosted, is_undo, intent_tags')
+          .eq('is_undo', false);
+
+        if (cutRows && cutRows.length > 0) {
+          for (const r of cutRows) {
+            const boosted = r.boosted as boolean;
+            const rating = r.rating as number | null;
+            const quality = boosted ? 'boosted' : rating === 1 ? 'good' : rating === 0 ? 'bad' : 'good';
+            if (quality === 'bad') continue;
+            joinedExamples.push({
+              editType: r.edit_type as string,
+              quality,
+              weight: boosted ? 3.0 : 1.0,
+              timestamp: r.edit_point_time as number,
+              tags: Array.isArray(r.intent_tags) ? r.intent_tags as string[] : [],
+            });
+          }
+          console.log(`[CuttingBoard] Fetched ${joinedExamples.length} cut_records from Supabase for training`);
+        }
+
+        // Also pull joined records
+        const { data: joinedRows } = await supabase
           .from('cutting_board_joined')
           .select('timestamp, matched, merged_tags, model_a_rating, confidence_tier')
           .in('confidence_tier', ['high', 'medium']);
 
-        if (rows && rows.length > 0) {
-          joinedExamples = rows.map(r => {
+        if (joinedRows && joinedRows.length > 0) {
+          const before = joinedExamples.length;
+          for (const r of joinedRows) {
             const tier = r.confidence_tier as string;
             const weight = tier === 'high' ? 3.0 : 1.0;
             const rating = r.model_a_rating as string | null;
             const quality = rating === 'boost' ? 'boosted' : rating === 'bad' ? 'bad' : 'good';
-            const tags = Array.isArray(r.merged_tags) ? r.merged_tags as string[] : [];
-            return {
-              editType: 'cut', // joined records are cut detections
+            if (quality === 'bad') continue;
+            joinedExamples.push({
+              editType: 'cut',
               quality,
               weight,
               timestamp: r.timestamp as number,
-              tags,
-            };
-          }).filter(e => e.quality !== 'bad');
-
-          console.log(`[CuttingBoard] Fetched ${joinedExamples.length} joined examples for training (${rows.length} total, filtered bad)`);
+              tags: Array.isArray(r.merged_tags) ? r.merged_tags as string[] : [],
+            });
+          }
+          console.log(`[CuttingBoard] Added ${joinedExamples.length - before} joined examples for training`);
         }
       } catch (err) {
-        console.error('[CuttingBoard] Failed to fetch joined examples:', err);
+        console.error('[CuttingBoard] Failed to fetch Supabase training data:', err);
       }
     }
 
     const url = `http://localhost:${config.serverPort}/api/plugins/cutting-board/command/train-model`;
-    const res = await fetch(url, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ joinedExamples }),
-    });
+    let res: Response;
+    try {
+      res = await fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ joinedExamples }),
+      });
+    } catch (err) {
+      const msg = `Train model fetch failed: ${(err as Error).message}`;
+      fs.appendFileSync('/tmp/mayday-train-debug.log', `${new Date().toISOString()} ${msg}\n`);
+      throw new Error(msg);
+    }
+    const rawText = await res.text();
+    fs.appendFileSync('/tmp/mayday-train-debug.log', `${new Date().toISOString()} status=${res.status} body=${rawText.slice(0, 500)}\n`);
     if (!res.ok) throw new Error(`Train model failed: ${res.status}`);
-    const data = await res.json();
-    return data.success ? data.result : data;
+    const data = JSON.parse(rawText);
+    const result = data.success ? data.result : data;
+    fs.appendFileSync('/tmp/mayday-train-debug.log', `${new Date().toISOString()} returning: ${JSON.stringify(result).slice(0, 200)}\n`);
+    return result;
   });
 
   ipcMain.handle('cuttingBoard:cloudMergeTrain', async (_e, localResult: { version: number; accuracy: number; trainingSize: number }) => {
@@ -393,36 +429,91 @@ export function registerCuttingBoardHandlers(): void {
     }
 
     // 3. Fetch ALL training examples from Supabase (all machines)
-    const { data: cloudRows, error: fetchErr } = await supabase
+    const cloudExamples: Array<Record<string, unknown>> = [];
+
+    // Pull from training_examples table (pushed by other machines or previous merges)
+    const { data: teRows, error: fetchErr } = await supabase
       .from('training_examples')
       .select('*')
       .neq('quality', 'bad');
 
-    if (fetchErr) throw new Error(`Failed to fetch cloud examples: ${fetchErr.message}`);
+    if (fetchErr) console.error(`[CloudMerge] training_examples fetch error: ${fetchErr.message}`);
 
-    const cloudExamples = (cloudRows ?? []).map((r: Record<string, unknown>) => ({
-      id: 0,
-      editType: r.edit_type as string,
-      quality: r.quality as string,
-      weight: r.weight as number,
-      context: r.context,
-      action: r.action,
-      timestamp: r.timestamp as number,
-    }));
+    for (const r of teRows ?? []) {
+      cloudExamples.push({
+        id: 0,
+        editType: r.edit_type as string,
+        quality: r.quality as string,
+        weight: r.weight as number,
+        context: r.context,
+        action: r.action,
+        timestamp: r.timestamp as number,
+      });
+    }
 
-    console.log(`[CloudMerge] Fetched ${cloudExamples.length} cloud examples from all machines`);
+    // Also pull cut_records directly (the main source of training data)
+    const { data: crRows } = await supabase
+      .from('cut_records')
+      .select('edit_type, edit_point_time, rating, boosted, is_undo')
+      .eq('is_undo', false);
+
+    for (const r of crRows ?? []) {
+      const boosted = r.boosted as boolean;
+      const rating = r.rating as number | null;
+      const quality = boosted ? 'boosted' : rating === 1 ? 'good' : rating === 0 ? 'bad' : 'good';
+      if (quality === 'bad') continue;
+      cloudExamples.push({
+        id: 0,
+        editType: r.edit_type as string,
+        quality,
+        weight: boosted ? 3.0 : 1.0,
+        context: { clipName: '', mediaPath: '', trackIndex: 0, trackType: 'video', editPointTime: r.edit_point_time as number, beforeDuration: null, afterDuration: null, neighborBefore: null, neighborAfter: null },
+        action: { editType: r.edit_type as string, deltaDuration: null, deltaStart: null, deltaEnd: null, splitRatio: 0.5 },
+        timestamp: (r.edit_point_time as number) * 1000,
+      });
+    }
+
+    // Also pull joined records
+    const { data: jRows } = await supabase
+      .from('cutting_board_joined')
+      .select('timestamp, model_a_rating, confidence_tier')
+      .in('confidence_tier', ['high', 'medium']);
+
+    for (const r of jRows ?? []) {
+      const tier = r.confidence_tier as string;
+      const rating = r.model_a_rating as string | null;
+      const quality = rating === 'boost' ? 'boosted' : rating === 'bad' ? 'bad' : 'good';
+      if (quality === 'bad') continue;
+      cloudExamples.push({
+        id: 0,
+        editType: 'cut',
+        quality,
+        weight: tier === 'high' ? 3.0 : 1.0,
+        context: { clipName: '', mediaPath: '', trackIndex: 0, trackType: 'video', editPointTime: r.timestamp as number, beforeDuration: null, afterDuration: null, neighborBefore: null, neighborAfter: null },
+        action: { editType: 'cut', deltaDuration: null, deltaStart: null, deltaEnd: null, splitRatio: 0.5 },
+        timestamp: (r.timestamp as number) * 1000,
+      });
+    }
+
+    console.log(`[CloudMerge] Total cloud examples: ${cloudExamples.length} (${teRows?.length ?? 0} training_examples + ${crRows?.length ?? 0} cut_records + ${jRows?.length ?? 0} joined)`);
 
     // 4. Retrain from the combined cloud dataset
+    const trainBody = JSON.stringify({ examples: cloudExamples, label: 'cloud-merge' });
+    fs.appendFileSync('/tmp/mayday-train-debug.log', `${new Date().toISOString()} [CloudMerge] Sending ${cloudExamples.length} examples (${(trainBody.length / 1024).toFixed(0)}kb) to train-from-examples\n`);
+
     const trainRes = await fetch(`${serverBase}/train-from-examples`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ examples: cloudExamples, label: 'cloud-merge' }),
+      body: trainBody,
     });
-    if (!trainRes.ok) throw new Error('Cloud retrain failed');
-    const trainData = await trainRes.json();
+    const trainRawText = await trainRes.text();
+    fs.appendFileSync('/tmp/mayday-train-debug.log', `${new Date().toISOString()} [CloudMerge] train-from-examples status=${trainRes.status} body=${trainRawText.slice(0, 300)}\n`);
+
+    if (!trainRes.ok) throw new Error(`Cloud retrain failed (${trainRes.status}): ${trainRawText.slice(0, 200)}`);
+    const trainData = JSON.parse(trainRawText);
     const cloudResult = trainData.success ? trainData.result : null;
 
-    if (!cloudResult) throw new Error('Cloud retrain returned no result');
+    if (!cloudResult) throw new Error(`Cloud retrain returned no result: ${trainRawText.slice(0, 200)}`);
 
     // 5. Push the cloud-trained model to autocut_models
     const modelRes = await fetch(`${serverBase}/get-model-data`, {

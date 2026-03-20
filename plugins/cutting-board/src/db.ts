@@ -95,6 +95,10 @@ export class CuttingBoardDB {
     return result.lastInsertRowid as number;
   }
 
+  updateSessionVideoId(sessionId: number, videoId: string): void {
+    this.db.prepare('UPDATE sessions SET video_id = ? WHERE id = ?').run(videoId, sessionId);
+  }
+
   endSession(sessionId: number, totalEdits: number): void {
     this.db.prepare(
       'UPDATE sessions SET ended_at = ?, total_edits = ? WHERE id = ?'

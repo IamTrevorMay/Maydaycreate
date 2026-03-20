@@ -21,7 +21,7 @@ const CONFIDENCE_COLORS: Record<string, string> = {
 };
 
 export function CuttingBoardPage(): React.ReactElement {
-  const { stats, trainingRuns, training, trainModel, postTrainResult, merging, mergeResult, cloudMergeTrain, dismissPostTrain } = useCuttingBoard();
+  const { stats, trainingRuns, training, trainModel, postTrainResult, merging, mergeResult, mergeError, cloudMergeTrain, dismissPostTrain } = useCuttingBoard();
 
   return (
     <div style={{ padding: 20, maxWidth: 700 }}>
@@ -32,7 +32,7 @@ export function CuttingBoardPage(): React.ReactElement {
       <JoinModelsSection />
 
       {/* Cut-watcher stats below */}
-      {stats && <CutWatcherStats stats={stats} trainingRuns={trainingRuns} training={training} trainModel={trainModel} postTrainResult={postTrainResult} merging={merging} mergeResult={mergeResult} cloudMergeTrain={cloudMergeTrain} dismissPostTrain={dismissPostTrain} />}
+      {stats && <CutWatcherStats stats={stats} trainingRuns={trainingRuns} training={training} trainModel={trainModel} postTrainResult={postTrainResult} merging={merging} mergeResult={mergeResult} mergeError={mergeError} cloudMergeTrain={cloudMergeTrain} dismissPostTrain={dismissPostTrain} />}
 
       {!stats && (
         <Section title="Cut-Watcher">
@@ -752,7 +752,7 @@ function CutRow({ cut, ipc, reviewed, onReviewed, onUpdated }: {
 
 // ── Cut-Watcher Stats ─────────────────────────────────────────────────────
 
-function CutWatcherStats({ stats, trainingRuns, training, trainModel, postTrainResult, merging, mergeResult, cloudMergeTrain, dismissPostTrain }: {
+function CutWatcherStats({ stats, trainingRuns, training, trainModel, postTrainResult, merging, mergeResult, mergeError, cloudMergeTrain, dismissPostTrain }: {
   stats: NonNullable<ReturnType<typeof useCuttingBoard>['stats']>;
   trainingRuns: ReturnType<typeof useCuttingBoard>['trainingRuns'];
   training: boolean;
@@ -760,6 +760,7 @@ function CutWatcherStats({ stats, trainingRuns, training, trainModel, postTrainR
   postTrainResult: ReturnType<typeof useCuttingBoard>['postTrainResult'];
   merging: boolean;
   mergeResult: ReturnType<typeof useCuttingBoard>['mergeResult'];
+  mergeError: string;
   cloudMergeTrain: () => void;
   dismissPostTrain: () => void;
 }): React.ReactElement {
@@ -934,6 +935,11 @@ function CutWatcherStats({ stats, trainingRuns, training, trainModel, postTrainR
               Push to Cloud merges your training data with all machines and retrains a shared model.
             </div>
           </div>
+        )}
+
+        {/* Merge error */}
+        {mergeError && (
+          <div style={{ color: c.status.error, fontSize: 11, marginBottom: 8 }}>{mergeError}</div>
         )}
 
         {/* Merging in progress */}

@@ -75,6 +75,7 @@ export interface TimelineServiceAPI {
   liftClip(trackIndex: number, clipIndex: number, trackType: 'video' | 'audio'): Promise<boolean>;
   setClipEnabled(trackIndex: number, clipIndex: number, trackType: 'video' | 'audio', enabled: boolean): Promise<boolean>;
   getProjectBinItems(): Promise<import('./timeline').ProjectBinItem[]>;
+  duplicateSequence(): Promise<{ originalName: string; backupName: string } | null>;
 }
 
 export interface AIServiceAPI {

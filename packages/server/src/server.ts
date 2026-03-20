@@ -104,7 +104,7 @@ export async function startServer(config: ServerConfig) {
     res.json(lifecycle.getAllPlugins());
   });
 
-  app.use(express.json());
+  app.use(express.json({ limit: '50mb' }));
 
   app.post('/api/plugins/:id/command/:command', async (req, res) => {
     try {

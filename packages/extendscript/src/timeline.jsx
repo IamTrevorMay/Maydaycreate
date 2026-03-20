@@ -291,6 +291,35 @@ var MaydayTimeline = (function () {
         return true;
     }
 
+    function duplicateSequence() {
+        var seq = app.project.activeSequence;
+        if (!seq) return null;
+
+        // Clone the active sequence via the project API
+        var cloneResult = seq.clone();
+        if (!cloneResult) return null;
+
+        // The cloned sequence becomes the last item in the project root
+        // Rename it to include " — Backup"
+        var items = app.project.rootItem.children;
+        for (var i = items.numItems - 1; i >= 0; i--) {
+            var item = items[i];
+            if (item.type === 1 && item.name === seq.name) {
+                // This is the clone (same name, just added)
+                item.name = seq.name + " \u2014 Backup";
+                break;
+            }
+        }
+
+        // Open the backup so user can see it, then switch back to original
+        app.project.openSequence(cloneResult.sequenceID || seq.sequenceID);
+
+        return {
+            originalName: seq.name,
+            backupName: seq.name + " \u2014 Backup"
+        };
+    }
+
     return {
         getActiveSequence: getActiveSequence,
         getClips: getClips,
@@ -304,6 +333,7 @@ var MaydayTimeline = (function () {
         rippleDelete: rippleDelete,
         liftClip: liftClip,
         setClipEnabled: setClipEnabled,
-        getProjectBinItems: getProjectBinItems
+        getProjectBinItems: getProjectBinItems,
+        duplicateSequence: duplicateSequence
     };
 })();
