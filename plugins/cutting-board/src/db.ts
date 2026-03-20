@@ -67,6 +67,11 @@ export class CuttingBoardDB {
       `);
     }
 
+    // Migration: add intent_tags column (JSON array of tag IDs)
+    if (!cols.some(c => c.name === 'intent_tags')) {
+      this.db.exec(`ALTER TABLE cut_records ADD COLUMN intent_tags TEXT DEFAULT '[]';`);
+    }
+
     // Migration: add synced_at columns for cloud sync
     if (!cols.some(c => c.name === 'synced_at')) {
       this.db.exec(`ALTER TABLE cut_records ADD COLUMN synced_at INTEGER;`);
@@ -75,13 +80,18 @@ export class CuttingBoardDB {
     if (!sessionCols.some(c => c.name === 'synced_at')) {
       this.db.exec(`ALTER TABLE sessions ADD COLUMN synced_at INTEGER;`);
     }
+
+    // Migration: add video_id column to sessions
+    if (!sessionCols.some(c => c.name === 'video_id')) {
+      this.db.exec(`ALTER TABLE sessions ADD COLUMN video_id TEXT;`);
+    }
   }
 
-  createSession(sequenceId: string, sequenceName: string): number {
+  createSession(sequenceId: string, sequenceName: string, videoId?: string): number {
     const stmt = this.db.prepare(
-      'INSERT INTO sessions (sequence_id, sequence_name, started_at) VALUES (?, ?, ?)'
+      'INSERT INTO sessions (sequence_id, sequence_name, started_at, video_id) VALUES (?, ?, ?, ?)'
     );
-    const result = stmt.run(sequenceId, sequenceName, Date.now());
+    const result = stmt.run(sequenceId, sequenceName, Date.now(), videoId ?? null);
     return result.lastInsertRowid as number;
   }
 
@@ -131,6 +141,24 @@ export class CuttingBoardDB {
     this.db.prepare(
       'UPDATE cut_records SET boosted = 1 WHERE id = ?'
     ).run(recordId);
+  }
+
+  setIntentTags(recordId: number, tags: string[]): void {
+    this.db.prepare(
+      'UPDATE cut_records SET intent_tags = ? WHERE id = ?'
+    ).run(JSON.stringify(tags), recordId);
+    // Any tags imply the user valued this cut — also set boosted for training weight
+    if (tags.length > 0) {
+      this.db.prepare(
+        'UPDATE cut_records SET boosted = 1 WHERE id = ?'
+      ).run(recordId);
+    }
+  }
+
+  getIntentTags(recordId: number): string[] {
+    const row = this.db.prepare('SELECT intent_tags FROM cut_records WHERE id = ?').get(recordId) as { intent_tags: string } | undefined;
+    if (!row?.intent_tags) return [];
+    try { return JSON.parse(row.intent_tags); } catch { return []; }
   }
 
   markPreviousEditAsDown(sessionId: number, currentRecordId: number): void {
@@ -200,6 +228,7 @@ export class CuttingBoardDB {
     boostedCount: number;
     undoRate: number;
     editsByType: Record<string, number>;
+    tagCounts: Record<string, number>;
     recentSessions: Array<{
       id: number;
       sequenceName: string;
@@ -262,6 +291,20 @@ export class CuttingBoardDB {
       approval_rate: number | null;
     }>;
 
+    // Aggregate intent tag counts across all records
+    const tagRows = this.db.prepare(
+      "SELECT intent_tags FROM cut_records WHERE intent_tags IS NOT NULL AND intent_tags != '[]'"
+    ).all() as { intent_tags: string }[];
+    const tagCounts: Record<string, number> = {};
+    for (const row of tagRows) {
+      try {
+        const tags: string[] = JSON.parse(row.intent_tags);
+        for (const t of tags) {
+          tagCounts[t] = (tagCounts[t] || 0) + 1;
+        }
+      } catch { /* skip malformed */ }
+    }
+
     return {
       totalEdits,
       totalSessions,
@@ -271,6 +314,7 @@ export class CuttingBoardDB {
       boostedCount,
       undoRate,
       editsByType,
+      tagCounts,
       recentSessions: recentSessions.map(s => ({
         id: s.id,
         sequenceName: s.sequence_name,
@@ -362,7 +406,7 @@ export class CuttingBoardDB {
 
   getUnsyncedRecords(limit = 500): Array<Record<string, unknown>> {
     return this.db.prepare(
-      'SELECT cr.*, s.sequence_id, s.sequence_name FROM cut_records cr JOIN sessions s ON cr.session_id = s.id WHERE cr.synced_at IS NULL LIMIT ?'
+      'SELECT cr.*, s.sequence_id, s.sequence_name, s.video_id FROM cut_records cr JOIN sessions s ON cr.session_id = s.id WHERE cr.synced_at IS NULL LIMIT ?'
     ).all(limit) as Array<Record<string, unknown>>;
   }
 

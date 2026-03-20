@@ -1,10 +1,14 @@
-import { ipcMain, app } from 'electron';
+import { ipcMain, app, BrowserWindow } from 'electron';
 import path from 'path';
 import fs from 'fs';
 import Database from 'better-sqlite3';
 import { createClient } from '@supabase/supabase-js';
 import { loadConfig } from './config-store.js';
-import type { CuttingBoardAggregateStats, CuttingBoardTrainingRun } from '@mayday/types';
+import { runCuttingBoardJoin } from './cutting-board-join.js';
+import { CutFinder } from './cutting-board-finder/cut-finder.js';
+import type { CuttingBoardAggregateStats, CuttingBoardTrainingRun, CutFinderExportOptions } from '@mayday/types';
+
+let _cutFinder: CutFinder | null = null;
 
 function getDbPath(): string {
   // In dev mode, userData is "Electron"; in packaged mode it's "@mayday/launcher"
@@ -68,6 +72,20 @@ function getAggregateStatsLocal(): CuttingBoardAggregateStats | null {
       });
     }
 
+    // Aggregate intent tag counts
+    const tagRows = db.prepare(
+      "SELECT intent_tags FROM cut_records WHERE intent_tags IS NOT NULL AND intent_tags != '[]'"
+    ).all() as { intent_tags: string }[];
+    const tagCounts: Record<string, number> = {};
+    for (const row of tagRows) {
+      try {
+        const tags: string[] = JSON.parse(row.intent_tags);
+        for (const t of tags) {
+          tagCounts[t] = (tagCounts[t] || 0) + 1;
+        }
+      } catch { /* skip malformed */ }
+    }
+
     return {
       totalEdits,
       totalSessions,
@@ -77,6 +95,7 @@ function getAggregateStatsLocal(): CuttingBoardAggregateStats | null {
       boostedCount,
       undoRate,
       editsByType,
+      tagCounts,
       recentSessions,
     };
   } catch (err) {
@@ -169,6 +188,21 @@ async function getAggregateStatsSupabase(): Promise<CuttingBoardAggregateStats |
     }
   }
 
+  // Fetch tag counts from Supabase
+  const tagCounts: Record<string, number> = {};
+  const { data: taggedRows } = await supabase
+    .from('cut_records')
+    .select('intent_tags')
+    .not('intent_tags', 'is', null);
+  if (taggedRows) {
+    for (const row of taggedRows) {
+      const tags = Array.isArray(row.intent_tags) ? row.intent_tags : [];
+      for (const t of tags) {
+        tagCounts[t as string] = (tagCounts[t as string] || 0) + 1;
+      }
+    }
+  }
+
   return {
     totalEdits: total,
     totalSessions: totalSessions ?? 0,
@@ -178,6 +212,7 @@ async function getAggregateStatsSupabase(): Promise<CuttingBoardAggregateStats |
     boostedCount: boostedCount ?? 0,
     undoRate,
     editsByType,
+    tagCounts,
     recentSessions,
   };
 }
@@ -215,6 +250,10 @@ function getTrainingRuns(): CuttingBoardTrainingRun[] {
 }
 
 export function registerCuttingBoardHandlers(): void {
+  const debugLog = '/tmp/mayday-cb-debug.log';
+  fs.writeFileSync(debugLog, `registerCuttingBoardHandlers called at ${new Date().toISOString()}\n`);
+  try {
+
   ipcMain.handle('cuttingBoard:getAggregateStats', async () => {
     try {
       const result = await getAggregateStats();
@@ -269,4 +308,83 @@ export function registerCuttingBoardHandlers(): void {
     // Return the training result directly so the UI can use it
     return data.success ? data.result : data;
   });
+
+  ipcMain.handle('cuttingBoard:joinModels', async (_e, videoId: string) => {
+    return runCuttingBoardJoin(videoId);
+  });
+
+  // ── Cut Finder IPC handlers ─────────────────────────────────────────────
+  // Lazily create CutFinder on first use to avoid constructor errors blocking registration
+
+  let _progressWired = false;
+
+  function getCutFinder(): CutFinder {
+    if (!_cutFinder) {
+      _cutFinder = new CutFinder();
+    }
+    if (!_progressWired) {
+      _progressWired = true;
+      _cutFinder.onProgress((progress) => {
+        for (const win of BrowserWindow.getAllWindows()) {
+          if (!win.isDestroyed()) {
+            win.webContents.send('cutFinder:progress', progress);
+          }
+        }
+      });
+    }
+    return _cutFinder;
+  }
+
+  ipcMain.handle('cutFinder:getVideoInfo', async (_e, url: string) => {
+    return getCutFinder().getVideoInfo(url);
+  });
+
+  ipcMain.handle('cutFinder:startAnalysis', async (_e, url: string) => {
+    return getCutFinder().startAnalysis(url);
+  });
+
+  ipcMain.handle('cutFinder:cancelAnalysis', (_e, id: string) => {
+    getCutFinder().cancelAnalysis(id);
+  });
+
+  ipcMain.handle('cutFinder:pauseAnalysis', (_e, id: string) => {
+    getCutFinder().pauseAnalysis(id);
+  });
+
+  ipcMain.handle('cutFinder:resumeAnalysis', async (_e, id: string) => {
+    await getCutFinder().resumeAnalysis(id);
+  });
+
+  ipcMain.handle('cutFinder:getAnalysis', (_e, id: string) => {
+    return getCutFinder().getAnalysis(id);
+  });
+
+  ipcMain.handle('cutFinder:listAnalyses', () => {
+    return getCutFinder().listAnalyses();
+  });
+
+  ipcMain.handle('cutFinder:deleteAnalysis', (_e, id: string) => {
+    return getCutFinder().deleteAnalysis(id);
+  });
+
+  ipcMain.handle('cutFinder:getCuts', (_e, analysisId: string) => {
+    return getCutFinder().getCuts(analysisId);
+  });
+
+  ipcMain.handle('cutFinder:getFrames', (_e, analysisId: string) => {
+    return getCutFinder().getFrames(analysisId);
+  });
+
+  ipcMain.handle('cutFinder:setIntentTags', (_e, cutId: string, tags: string[]) => {
+    getCutFinder().setIntentTags(cutId, tags);
+  });
+
+  ipcMain.handle('cutFinder:export', (_e, options: CutFinderExportOptions) => {
+    return getCutFinder().exportAnalysis(options);
+  });
+
+  fs.appendFileSync(debugLog, `All handlers registered OK\n`);
+  } catch (err) {
+    fs.appendFileSync(debugLog, `ERROR: ${(err as Error).stack || err}\n`);
+  }
 }

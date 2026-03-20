@@ -24,6 +24,12 @@ import type {
   ExportOptions,
   CuttingBoardAggregateStats,
   CuttingBoardTrainingRun,
+  CuttingBoardJoinResult,
+  CutFinderProgress,
+  CutFinderAnalysis,
+  CutFinderAnalysisSummary,
+  DetectedCut,
+  CutFinderExportOptions,
 } from '@mayday/types';
 
 const mayday = {
@@ -142,6 +148,38 @@ const mayday = {
       ipcRenderer.invoke('cuttingBoard:getTrainingRuns'),
     trainModel: (): Promise<unknown> =>
       ipcRenderer.invoke('cuttingBoard:trainModel'),
+    joinModels: (videoId: string): Promise<CuttingBoardJoinResult> =>
+      ipcRenderer.invoke('cuttingBoard:joinModels', videoId),
+  },
+
+  cutFinder: {
+    startAnalysis: (url: string): Promise<string> =>
+      ipcRenderer.invoke('cutFinder:startAnalysis', url),
+    cancelAnalysis: (id: string): Promise<void> =>
+      ipcRenderer.invoke('cutFinder:cancelAnalysis', id),
+    pauseAnalysis: (id: string): Promise<void> =>
+      ipcRenderer.invoke('cutFinder:pauseAnalysis', id),
+    resumeAnalysis: (id: string): Promise<void> =>
+      ipcRenderer.invoke('cutFinder:resumeAnalysis', id),
+    getAnalysis: (id: string): Promise<CutFinderAnalysis | null> =>
+      ipcRenderer.invoke('cutFinder:getAnalysis', id),
+    listAnalyses: (): Promise<CutFinderAnalysisSummary[]> =>
+      ipcRenderer.invoke('cutFinder:listAnalyses'),
+    deleteAnalysis: (id: string): Promise<boolean> =>
+      ipcRenderer.invoke('cutFinder:deleteAnalysis', id),
+    getCuts: (analysisId: string): Promise<DetectedCut[]> =>
+      ipcRenderer.invoke('cutFinder:getCuts', analysisId),
+    getFrames: (analysisId: string): Promise<ExtractedFrame[]> =>
+      ipcRenderer.invoke('cutFinder:getFrames', analysisId),
+    setIntentTags: (cutId: string, tags: string[]): Promise<void> =>
+      ipcRenderer.invoke('cutFinder:setIntentTags', cutId, tags),
+    export: (options: CutFinderExportOptions): Promise<string> =>
+      ipcRenderer.invoke('cutFinder:export', options),
+    onProgress: (cb: (progress: CutFinderProgress) => void) => {
+      const handler = (_: unknown, progress: CutFinderProgress) => cb(progress);
+      ipcRenderer.on('cutFinder:progress', handler);
+      return () => ipcRenderer.off('cutFinder:progress', handler);
+    },
   },
 
   youtube: {

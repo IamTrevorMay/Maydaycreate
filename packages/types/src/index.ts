@@ -8,3 +8,5 @@ export * from './effects.js';
 export * from './launcher.js';
 export * from './youtube.js';
 export * from './cutting-board.js';
+export * from './cut-finder.js';
+export * from './cutting-board-tags.js';

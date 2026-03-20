@@ -10,6 +10,7 @@ import {
   setMainWindow,
   setYouTubeAnalyzer,
   registerYouTubeIpc,
+  registerCutFinderIpc,
   bridgeSyncEvents,
   bridgeServerEvents,
 } from './ipc-handlers.js';
@@ -140,6 +141,10 @@ app.on('second-instance', () => {
 });
 
 app.whenReady().then(async () => {
+  const _dbg = '/tmp/mayday-startup-debug.log';
+  const _log = (msg: string) => fs.appendFileSync(_dbg, `${Date.now()} ${msg}\n`);
+  fs.writeFileSync(_dbg, `Startup at ${new Date().toISOString()}\nuserData: ${app.getPath('userData')}\n`);
+
   // Register custom protocol for loading local frame images in renderer
   protocol.registerFileProtocol('mayday-frame', (request, callback) => {
     const filePath = decodeURIComponent(request.url.replace('mayday-frame://', ''));
@@ -175,12 +180,19 @@ app.whenReady().then(async () => {
 
   setSyncEngine(syncEngine);
   setYouTubeAnalyzer(youtubeAnalyzer);
-  registerIpcHandlers();
+  _log('Before registerIpcHandlers');
+  try {
+    registerIpcHandlers();
+    _log('After registerIpcHandlers OK');
+  } catch (err) {
+    _log(`registerIpcHandlers FAILED: ${(err as Error).stack || err}`);
+  }
 
   // Create window
   mainWindow = createWindow();
   setMainWindow(mainWindow);
   registerYouTubeIpc();
+  registerCutFinderIpc();
   bridgeSyncEvents();
   bridgeServerEvents();
 

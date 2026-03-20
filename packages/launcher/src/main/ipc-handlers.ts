@@ -248,6 +248,11 @@ export function registerYouTubeIpc(): void {
   }
 }
 
+/** No-op — cut-finder handlers now register inside registerCuttingBoardHandlers */
+export function registerCutFinderIpc(): void {
+  // Handlers are registered in cutting-board-ipc.ts
+}
+
 /** Push sync status changes to renderer via IPC events */
 export function bridgeSyncEvents(): void {
   if (!_syncEngine) return;

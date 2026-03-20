@@ -17,6 +17,7 @@ export interface AggregateCloudStats {
   boostedCount: number;
   undoRate: number;
   editsByType: Record<string, number>;
+  tagCounts: Record<string, number>;
   machineCount: number;
 }
 
@@ -65,6 +66,7 @@ export class SupabaseSyncService {
           started_at: s.started_at,
           ended_at: s.ended_at ?? null,
           total_edits: s.total_edits ?? 0,
+          video_id: (s.video_id as string) ?? null,
         }));
 
         const { error } = await this.client
@@ -102,6 +104,8 @@ export class SupabaseSyncService {
           detected_at: r.detected_at,
           feedback_at: r.feedback_at ?? null,
           boosted: r.boosted === 1,
+          intent_tags: (() => { try { return JSON.parse((r.intent_tags as string) || '[]'); } catch { return []; } })(),
+          video_id: (r.video_id as string) ?? null,
         }));
 
         const { error } = await this.client
@@ -186,6 +190,21 @@ export class SupabaseSyncService {
         }
       }
 
+      // Aggregate intent tag counts
+      const tagCounts: Record<string, number> = {};
+      const { data: taggedRows } = await this.client
+        .from('cut_records')
+        .select('intent_tags')
+        .not('intent_tags', 'is', null);
+      if (taggedRows) {
+        for (const row of taggedRows) {
+          const tags = Array.isArray(row.intent_tags) ? row.intent_tags : [];
+          for (const t of tags) {
+            tagCounts[t as string] = (tagCounts[t as string] || 0) + 1;
+          }
+        }
+      }
+
       return {
         totalEdits: total,
         totalSessions: totalSessions ?? 0,
@@ -195,6 +214,7 @@ export class SupabaseSyncService {
         boostedCount: boostedCount ?? 0,
         undoRate,
         editsByType,
+        tagCounts,
         machineCount,
       };
     } catch (err) {

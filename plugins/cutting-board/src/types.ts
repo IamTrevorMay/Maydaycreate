@@ -58,6 +58,7 @@ export interface Session {
   id?: number;
   sequenceId: string;
   sequenceName: string;
+  videoId: string | null;
   startedAt: number;
   endedAt: number | null;
   totalEdits: number;

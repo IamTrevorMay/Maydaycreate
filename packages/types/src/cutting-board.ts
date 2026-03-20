@@ -7,6 +7,7 @@ export interface CuttingBoardAggregateStats {
   boostedCount: number;
   undoRate: number;
   editsByType: Record<string, number>;
+  tagCounts: Record<string, number>;
   recentSessions: Array<{
     id: number;
     sequenceName: string;
@@ -14,6 +15,16 @@ export interface CuttingBoardAggregateStats {
     totalEdits: number;
     approvalRate: number | null;
   }>;
+}
+
+export interface CuttingBoardJoinResult {
+  videoId: string;
+  totalModelA: number;
+  totalModelB: number;
+  matched: number;
+  unmatchedA: number;
+  unmatchedB: number;
+  written: number;
 }
 
 export interface CuttingBoardTrainingRun {

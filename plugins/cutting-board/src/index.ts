@@ -12,9 +12,34 @@ import type { TimelineSnapshot, EditChange } from './types.js';
 const POLL_INTERVAL = 500;
 const SNAPSHOT_RING_SIZE = 20;
 
+/**
+ * Parse a YouTube URL or short manual ID into a video_id.
+ * YouTube URLs → extract the `v` param or short-link slug.
+ * Anything else is stored as-is (e.g. "ep047").
+ */
+function parseVideoId(input: string): string {
+  const trimmed = input.trim();
+  if (!trimmed) return '';
+  try {
+    const url = new URL(trimmed);
+    // youtube.com/watch?v=ID
+    if (url.hostname.includes('youtube.com') || url.hostname.includes('youtube-nocookie.com')) {
+      return url.searchParams.get('v') || trimmed;
+    }
+    // youtu.be/ID
+    if (url.hostname === 'youtu.be') {
+      return url.pathname.slice(1).split('/')[0] || trimmed;
+    }
+  } catch {
+    // Not a URL — treat as manual ID
+  }
+  return trimmed;
+}
+
 let db: CuttingBoardDB | null = null;
 let pollTimer: ReturnType<typeof setTimeout> | null = null;
 let currentSessionId: number | null = null;
+let currentVideoId: string | null = null;
 let previousSnapshot: TimelineSnapshot | null = null;
 let snapshotHistory: TimelineSnapshot[] = [];
 let editCount = 0;
@@ -57,6 +82,7 @@ function cleanup() {
   previousSnapshot = null;
   snapshotHistory = [];
   currentSessionId = null;
+  currentVideoId = null;
   editCount = 0;
   autocutEnabled = false;
   autocutClassifier = null;
@@ -241,13 +267,29 @@ export default definePlugin({
       }
     }));
 
+    // Listen for intent-tag updates from panel
+    eventSubs.push(ctx.onEvent('plugin:cutting-board:set-tags', (data) => {
+      const { recordId, tags } = data as { recordId: number; tags: string[] };
+      if (db) {
+        db.setIntentTags(recordId, tags);
+        ctx.log.info(`Tagged record ${recordId}: [${tags.join(', ')}]`);
+      }
+    }));
+
+    // Listen for video-id updates from panel/CLI
+    eventSubs.push(ctx.onEvent('plugin:cutting-board:set-video-id', (data) => {
+      const { videoId: raw } = data as { videoId: string };
+      currentVideoId = parseVideoId(raw);
+      ctx.log.info(`Video ID set: "${currentVideoId}"`);
+    }));
+
     // Auto-start capture when a sequence is available
     const tryAutoStart = async () => {
       if (pollTimer) return; // already capturing
       try {
         const seq = await ctx.services.timeline.getActiveSequence();
         if (seq && db) {
-          currentSessionId = db.createSession(seq.sequenceId, seq.name);
+          currentSessionId = db.createSession(seq.sequenceId, seq.name, currentVideoId ?? undefined);
           editCount = 0;
           previousSnapshot = null;
           snapshotHistory = [];
@@ -294,12 +336,13 @@ export default definePlugin({
     previousSnapshot = null;
     snapshotHistory = [];
     currentSessionId = null;
+    currentVideoId = null;
     editCount = 0;
     ctx.log.info('Cutting Board deactivated');
   },
 
   commands: {
-    'start-capture': async (ctx) => {
+    'start-capture': async (ctx, args) => {
       if (pollTimer) {
         ctx.ui.showToast('Already capturing', 'warning');
         return { capturing: true };
@@ -315,8 +358,14 @@ export default definePlugin({
         db = new CuttingBoardDB(ctx.dataDir);
       }
 
+      // Accept optional videoId from args (YouTube URL or manual ID)
+      const rawVideoId = (args as { videoId?: string } | undefined)?.videoId;
+      if (rawVideoId) {
+        currentVideoId = parseVideoId(rawVideoId);
+      }
+
       // Create session
-      currentSessionId = db.createSession(seq.sequenceId, seq.name);
+      currentSessionId = db.createSession(seq.sequenceId, seq.name, currentVideoId ?? undefined);
       editCount = 0;
       previousSnapshot = null;
       snapshotHistory = [];
@@ -337,7 +386,7 @@ export default definePlugin({
       // (handled via EventBus in the server — the plugin receives these through
       //  the server's message routing)
 
-      return { sessionId: currentSessionId, sequence: seq.name };
+      return { sessionId: currentSessionId, sequence: seq.name, videoId: currentVideoId };
     },
 
     'stop-capture': async (ctx) => {
@@ -363,6 +412,7 @@ export default definePlugin({
 
         const sessionId = currentSessionId;
         currentSessionId = null;
+        currentVideoId = null;
         previousSnapshot = null;
         snapshotHistory = [];
         editCount = 0;

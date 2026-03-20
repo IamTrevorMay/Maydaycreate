@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import type { BridgeMessage } from '@mayday/types';
+import { INTENT_TAGS } from '@mayday/types';
 
 interface FeedbackRequest {
   recordId: number;
@@ -16,7 +17,7 @@ interface CutFeedbackWidgetProps {
 }
 
 const AUTO_DISMISS_MS = 5000;
-const BOOST_FLASH_MS = 800;
+const TAG_CONFIRM_MS = 800;
 
 function formatTimecode(seconds: number): string {
   const m = Math.floor(seconds / 60);
@@ -37,8 +38,11 @@ const editTypeLabels: Record<string, string> = {
 export function CutFeedbackWidget({ onMessage, send }: CutFeedbackWidgetProps) {
   const [queue, setQueue] = useState<FeedbackRequest[]>([]);
   const [current, setCurrent] = useState<FeedbackRequest | null>(null);
-  const [boosted, setBoosted] = useState(false);
+  const [selectedTags, setSelectedTags] = useState<string[]>([]);
+  const [dropdownOpen, setDropdownOpen] = useState(false);
+  const [submitted, setSubmitted] = useState(false);
   const dismissRef = useRef<ReturnType<typeof setTimeout>>();
+  const dropdownRef = useRef<HTMLDivElement>(null);
 
   // Subscribe to feedback requests
   useEffect(() => {
@@ -49,51 +53,70 @@ export function CutFeedbackWidget({ onMessage, send }: CutFeedbackWidgetProps) {
     return unsub;
   }, [onMessage]);
 
-  // Subscribe to server-side hotkey boost
-  useEffect(() => {
-    const unsub = onMessage('plugin:cutting-board:hotkey-boost', (payload) => {
-      const { recordId } = payload as { recordId: number };
-      if (current && current.recordId === recordId) {
-        setBoosted(true);
-        clearTimeout(dismissRef.current);
-        dismissRef.current = setTimeout(() => setCurrent(null), BOOST_FLASH_MS);
-      }
-    });
-    return unsub;
-  }, [onMessage, current]);
-
   // Show next item from queue
   useEffect(() => {
     if (!current && queue.length > 0) {
       const [next, ...rest] = queue;
       setCurrent(next);
       setQueue(rest);
-      setBoosted(false);
+      setSelectedTags([]);
+      setDropdownOpen(false);
+      setSubmitted(false);
     }
   }, [current, queue]);
 
-  // Auto-dismiss timer
+  // Auto-dismiss timer — paused while dropdown is open
   useEffect(() => {
-    if (!current) return;
+    if (!current || dropdownOpen) return;
     clearTimeout(dismissRef.current);
     dismissRef.current = setTimeout(() => {
+      // If tags were selected, send them before dismissing
+      if (selectedTags.length > 0 && !submitted) {
+        sendTags(current.recordId, selectedTags);
+      }
       setCurrent(null);
     }, AUTO_DISMISS_MS);
     return () => clearTimeout(dismissRef.current);
-  }, [current]);
+  }, [current, dropdownOpen, selectedTags, submitted]);
 
-  const boost = useCallback(() => {
-    if (!current || current.isUndo) return;
-    setBoosted(true);
+  // Close dropdown on outside click
+  useEffect(() => {
+    if (!dropdownOpen) return;
+    function handleClick(e: MouseEvent) {
+      if (dropdownRef.current && !dropdownRef.current.contains(e.target as Node)) {
+        setDropdownOpen(false);
+      }
+    }
+    document.addEventListener('mousedown', handleClick);
+    return () => document.removeEventListener('mousedown', handleClick);
+  }, [dropdownOpen]);
+
+  const sendTags = useCallback((recordId: number, tags: string[]) => {
     send({
       id: crypto.randomUUID(),
-      type: 'plugin:cutting-board:boost',
-      payload: { recordId: current.recordId },
+      type: 'plugin:cutting-board:set-tags',
+      payload: { recordId, tags },
       timestamp: Date.now(),
     });
+    setSubmitted(true);
+  }, [send]);
+
+  const toggleTag = useCallback((tagId: string) => {
+    setSelectedTags(prev => {
+      const next = prev.includes(tagId)
+        ? prev.filter(t => t !== tagId)
+        : [...prev, tagId];
+      return next;
+    });
+  }, []);
+
+  const confirmTags = useCallback(() => {
+    if (!current) return;
+    sendTags(current.recordId, selectedTags);
+    setDropdownOpen(false);
     clearTimeout(dismissRef.current);
-    dismissRef.current = setTimeout(() => setCurrent(null), BOOST_FLASH_MS);
-  }, [current, send]);
+    dismissRef.current = setTimeout(() => setCurrent(null), TAG_CONFIRM_MS);
+  }, [current, selectedTags, sendTags]);
 
   if (!current) return null;
 
@@ -141,36 +164,103 @@ export function CutFeedbackWidget({ onMessage, send }: CutFeedbackWidgetProps) {
         </span>
       </div>
 
-      {/* Boost button or boosted confirmation */}
-      {boosted ? (
-        <span style={{ color: '#fbbf24', fontSize: 12, fontWeight: 700, whiteSpace: 'nowrap' }}>
-          {'\u2B50'} Boosted!
-        </span>
-      ) : !isUndo ? (
-        <button
-          onClick={boost}
-          style={{
-            background: '#1e3a5f',
-            border: '1px solid #2680eb',
-            borderRadius: 3,
-            padding: '2px 8px',
-            cursor: 'pointer',
-            fontSize: 10,
-            color: '#93c5fd',
-            fontWeight: 600,
-            whiteSpace: 'nowrap',
-          }}
-          title="Boost this edit (B)"
-        >
-          {'\u2B50'} Boost
-        </button>
-      ) : null}
+      {/* Tag picker dropdown (replaces boost button) */}
+      {!isUndo && (
+        submitted ? (
+          <span style={{ color: '#4ade80', fontSize: 11, fontWeight: 600, whiteSpace: 'nowrap' }}>
+            {selectedTags.length > 0
+              ? INTENT_TAGS.filter(t => selectedTags.includes(t.id)).map(t => t.label).join(', ')
+              : 'Tagged'}
+          </span>
+        ) : (
+          <div ref={dropdownRef} style={{ position: 'relative' }}>
+            <button
+              onClick={() => setDropdownOpen(o => !o)}
+              style={{
+                background: selectedTags.length > 0 ? '#1e3a5f' : '#2a2a3e',
+                border: `1px solid ${selectedTags.length > 0 ? '#2680eb' : '#444'}`,
+                borderRadius: 3,
+                padding: '2px 8px',
+                cursor: 'pointer',
+                fontSize: 10,
+                color: selectedTags.length > 0 ? '#93c5fd' : '#999',
+                fontWeight: 600,
+                whiteSpace: 'nowrap',
+                display: 'flex',
+                alignItems: 'center',
+                gap: 4,
+              }}
+            >
+              {selectedTags.length > 0
+                ? `${selectedTags.length} tag${selectedTags.length > 1 ? 's' : ''}`
+                : 'Tag'}
+              <span style={{ fontSize: 8 }}>{dropdownOpen ? '\u25B2' : '\u25BC'}</span>
+            </button>
 
-      {/* Hint */}
-      {!isUndo && !boosted && (
-        <span style={{ color: '#475569', fontSize: 9, whiteSpace: 'nowrap' }}>
-          B to boost
-        </span>
+            {dropdownOpen && (
+              <div style={{
+                position: 'absolute',
+                bottom: '100%',
+                right: 0,
+                marginBottom: 4,
+                background: '#1e1e2e',
+                border: '1px solid #444',
+                borderRadius: 6,
+                padding: 6,
+                minWidth: 200,
+                boxShadow: '0 -4px 16px rgba(0,0,0,0.5)',
+                zIndex: 300,
+              }}>
+                {INTENT_TAGS.map(tag => {
+                  const active = selectedTags.includes(tag.id);
+                  return (
+                    <button
+                      key={tag.id}
+                      onClick={() => toggleTag(tag.id)}
+                      style={{
+                        display: 'block',
+                        width: '100%',
+                        padding: '5px 8px',
+                        background: active ? '#1e3a5f' : 'transparent',
+                        border: 'none',
+                        borderRadius: 3,
+                        cursor: 'pointer',
+                        fontSize: 11,
+                        color: active ? '#93c5fd' : '#ccc',
+                        fontWeight: active ? 600 : 400,
+                        textAlign: 'left',
+                        marginBottom: 2,
+                      }}
+                    >
+                      {active ? '\u2713 ' : ''}{tag.label}
+                    </button>
+                  );
+                })}
+
+                {/* Confirm button */}
+                <button
+                  onClick={confirmTags}
+                  style={{
+                    display: 'block',
+                    width: '100%',
+                    padding: '5px 8px',
+                    marginTop: 4,
+                    background: selectedTags.length > 0 ? '#2680eb' : '#333',
+                    border: 'none',
+                    borderRadius: 3,
+                    cursor: selectedTags.length > 0 ? 'pointer' : 'default',
+                    fontSize: 10,
+                    color: selectedTags.length > 0 ? '#fff' : '#666',
+                    fontWeight: 600,
+                    textAlign: 'center',
+                  }}
+                >
+                  {selectedTags.length > 0 ? 'Done' : 'Skip'}
+                </button>
+              </div>
+            )}
+          </div>
+        )
       )}
 
       {/* Queue indicator */}
