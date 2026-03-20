@@ -109,9 +109,7 @@
       "hardenedRuntime": true,
       "entitlements": "build/entitlements.mac.plist",
       "entitlementsInherit": "build/entitlements.mac.plist",
-      "notarize": {
-        "teamId": "XF99392HXQ"
-      }
+      "notarize": false
     },
     "dmg": {
       "title": "Mayday Create",
