@@ -3,7 +3,7 @@ import { c } from '../styles.js';
 import { useIpc } from '../hooks/useIpc.js';
 import { useCuttingBoard } from '../hooks/useCuttingBoard.js';
 import { INTENT_TAGS } from '@mayday/types';
-import type { CutFinderAnalysisSummary, CutFinderProgress, DetectedCut } from '@mayday/types';
+import type { CutFinderAnalysisSummary, CutFinderProgress, DetectedCut, CuttingBoardJoinResult } from '@mayday/types';
 
 const EDIT_TYPE_COLORS: Record<string, string> = {
   cut: '#2680eb',
@@ -27,6 +27,9 @@ export function CuttingBoardPage(): React.ReactElement {
     <div style={{ padding: 20, maxWidth: 700 }}>
       {/* Cut Finder — always visible */}
       <CutFinderSection />
+
+      {/* Join Models */}
+      <JoinModelsSection />
 
       {/* Cut-watcher stats below */}
       {stats && <CutWatcherStats stats={stats} trainingRuns={trainingRuns} training={training} trainModel={trainModel} />}
@@ -285,6 +288,155 @@ function CutFinderSection(): React.ReactElement {
       {analyses.length === 0 && !progress && (
         <div style={{ color: c.text.disabled, fontSize: 11 }}>
           Paste a YouTube URL above to detect cuts in a finished video.
+        </div>
+      )}
+    </Section>
+  );
+}
+
+// ── Join Models Section ───────────────────────────────────────────────────
+
+function JoinModelsSection(): React.ReactElement {
+  const ipc = useIpc();
+  const [videoId, setVideoId] = useState('');
+  const [running, setRunning] = useState(false);
+  const [result, setResult] = useState<CuttingBoardJoinResult | null>(null);
+  const [error, setError] = useState('');
+  const [syncing, setSyncing] = useState(false);
+
+  const runJoin = useCallback(async () => {
+    if (!videoId.trim()) return;
+    setRunning(true);
+    setError('');
+    setResult(null);
+    try {
+      // Sync cut-finder data to Supabase first
+      setSyncing(true);
+      try {
+        await ipc.cutFinder.syncToSupabase();
+      } catch {
+        // Sync may fail if Supabase isn't configured — continue with join anyway
+      }
+      setSyncing(false);
+
+      const r = await ipc.cuttingBoard.joinModels(videoId.trim());
+      setResult(r);
+    } catch (err) {
+      setError((err as Error).message || 'Join failed');
+    } finally {
+      setRunning(false);
+      setSyncing(false);
+    }
+  }, [videoId, ipc]);
+
+  const total = result ? result.matched + result.unmatchedA + result.unmatchedB : 0;
+
+  return (
+    <Section title="Join Models">
+      <div style={{ display: 'flex', gap: 8, marginBottom: 10 }}>
+        <input
+          type="text"
+          value={videoId}
+          onChange={e => setVideoId(e.target.value)}
+          onKeyDown={e => e.key === 'Enter' && runJoin()}
+          placeholder="Video ID (e.g. dQw4w9WgXcQ or ep047)"
+          style={{
+            flex: 1,
+            padding: '6px 10px',
+            background: c.bg.tertiary,
+            border: `1px solid ${c.border.default}`,
+            borderRadius: 4,
+            color: c.text.primary,
+            fontSize: 12,
+            outline: 'none',
+          }}
+        />
+        <button
+          onClick={runJoin}
+          disabled={!videoId.trim() || running}
+          style={{
+            padding: '6px 16px',
+            background: videoId.trim() && !running ? c.accent.primary : c.bg.tertiary,
+            color: videoId.trim() && !running ? '#fff' : c.text.disabled,
+            border: 'none',
+            borderRadius: 4,
+            fontSize: 12,
+            fontWeight: 600,
+            cursor: videoId.trim() && !running ? 'pointer' : 'default',
+          }}
+        >
+          {syncing ? 'Syncing...' : running ? 'Joining...' : 'Join'}
+        </button>
+      </div>
+
+      {error && <div style={{ color: c.status.error, fontSize: 11, marginBottom: 8 }}>{error}</div>}
+
+      {result && (
+        <div>
+          {/* Summary stats */}
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 8, marginBottom: 12 }}>
+            <div style={{ textAlign: 'center' }}>
+              <div style={{ fontSize: 18, fontWeight: 700, color: c.status.success }}>{result.matched}</div>
+              <div style={{ fontSize: 9, color: c.text.secondary }}>Matched</div>
+            </div>
+            <div style={{ textAlign: 'center' }}>
+              <div style={{ fontSize: 18, fontWeight: 700, color: c.text.primary }}>{result.unmatchedA}</div>
+              <div style={{ fontSize: 9, color: c.text.secondary }}>Watcher only</div>
+            </div>
+            <div style={{ textAlign: 'center' }}>
+              <div style={{ fontSize: 18, fontWeight: 700, color: c.text.primary }}>{result.unmatchedB}</div>
+              <div style={{ fontSize: 9, color: c.text.secondary }}>Finder only</div>
+            </div>
+            <div style={{ textAlign: 'center' }}>
+              <div style={{ fontSize: 18, fontWeight: 700, color: c.accent.primary }}>{result.written}</div>
+              <div style={{ fontSize: 9, color: c.text.secondary }}>Written</div>
+            </div>
+          </div>
+
+          {/* Confidence tier breakdown */}
+          {total > 0 && (
+            <div style={{ marginBottom: 8 }}>
+              <div style={{ fontSize: 10, color: c.text.secondary, marginBottom: 4 }}>Confidence Tiers</div>
+              <div style={{ display: 'flex', height: 20, borderRadius: 4, overflow: 'hidden' }}>
+                {result.matched > 0 && (
+                  <div
+                    style={{
+                      flex: result.matched,
+                      background: c.status.success,
+                      display: 'flex', alignItems: 'center', justifyContent: 'center',
+                      fontSize: 9, color: '#000', fontWeight: 600,
+                    }}
+                    title={`High: ${result.matched} matched with tags`}
+                  >
+                    {result.matched > 0 ? 'high' : ''}
+                  </div>
+                )}
+                {(result.unmatchedA + result.unmatchedB) > 0 && (
+                  <div
+                    style={{
+                      flex: result.unmatchedA + result.unmatchedB,
+                      background: c.status.warning,
+                      display: 'flex', alignItems: 'center', justifyContent: 'center',
+                      fontSize: 9, color: '#000', fontWeight: 600,
+                    }}
+                    title={`Medium/Low: ${result.unmatchedA + result.unmatchedB} unmatched`}
+                  >
+                    med/low
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
+
+          <div style={{ fontSize: 10, color: c.text.disabled }}>
+            Model A: {result.totalModelA} cuts from live editing | Model B: {result.totalModelB} cuts from video analysis
+          </div>
+        </div>
+      )}
+
+      {!result && !running && (
+        <div style={{ fontSize: 11, color: c.text.disabled }}>
+          Enter a video ID to match cuts from both models and write joined records to Supabase.
         </div>
       )}
     </Section>

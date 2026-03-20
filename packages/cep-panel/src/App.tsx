@@ -2,6 +2,7 @@ import React from 'react';
 import { PluginManager } from './panels/PluginManager.js';
 import { useWebSocket } from './bridge/websocket.js';
 import { CutFeedbackWidget } from './components/CutFeedbackWidget.js';
+import { VideoIdBar } from './components/VideoIdBar.js';
 import { AgentPanel } from './components/AgentPanel.js';
 import { PresetVaultPanel } from './components/PresetVaultPanel.js';
 
@@ -34,6 +35,7 @@ export function App() {
         <PresetVaultPanel onMessage={onMessage} />
         <AgentPanel onMessage={onMessage} send={send} />
       </main>
+      <VideoIdBar send={send} />
       <CutFeedbackWidget onMessage={onMessage} send={send} />
     </div>
   );

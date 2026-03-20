@@ -18,6 +18,10 @@ type ProgressCallback = (progress: CutFinderProgress) => void;
 
 export class CutFinder {
   private db: CutFinderDB;
+
+  get database(): CutFinderDB {
+    return this.db;
+  }
   private ytdlp: YtDlpService;
   private pipeline: CutFinderPipeline;
   private progressListeners: ProgressCallback[] = [];

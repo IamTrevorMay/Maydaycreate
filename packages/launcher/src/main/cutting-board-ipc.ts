@@ -6,9 +6,11 @@ import { createClient } from '@supabase/supabase-js';
 import { loadConfig } from './config-store.js';
 import { runCuttingBoardJoin } from './cutting-board-join.js';
 import { CutFinder } from './cutting-board-finder/cut-finder.js';
+import { CutFinderSyncService } from './cutting-board-finder/cut-finder-sync.js';
 import type { CuttingBoardAggregateStats, CuttingBoardTrainingRun, CutFinderExportOptions } from '@mayday/types';
 
 let _cutFinder: CutFinder | null = null;
+let _cutFinderSync: CutFinderSyncService | null = null;
 
 function getDbPath(): string {
   // In dev mode, userData is "Electron"; in packaged mode it's "@mayday/launcher"
@@ -301,11 +303,48 @@ export function registerCuttingBoardHandlers(): void {
 
   ipcMain.handle('cuttingBoard:trainModel', async () => {
     const config = loadConfig();
+
+    // Fetch joined examples from Supabase to augment local training data
+    let joinedExamples: Array<{ editType: string; quality: string; weight: number; timestamp: number; tags: string[] }> = [];
+    if (config.supabaseUrl && config.supabaseAnonKey) {
+      try {
+        const supabase = createClient(config.supabaseUrl, config.supabaseAnonKey);
+        const { data: rows } = await supabase
+          .from('cutting_board_joined')
+          .select('timestamp, matched, merged_tags, model_a_rating, confidence_tier')
+          .in('confidence_tier', ['high', 'medium']);
+
+        if (rows && rows.length > 0) {
+          joinedExamples = rows.map(r => {
+            const tier = r.confidence_tier as string;
+            const weight = tier === 'high' ? 3.0 : 1.0;
+            const rating = r.model_a_rating as string | null;
+            const quality = rating === 'boost' ? 'boosted' : rating === 'bad' ? 'bad' : 'good';
+            const tags = Array.isArray(r.merged_tags) ? r.merged_tags as string[] : [];
+            return {
+              editType: 'cut', // joined records are cut detections
+              quality,
+              weight,
+              timestamp: r.timestamp as number,
+              tags,
+            };
+          }).filter(e => e.quality !== 'bad');
+
+          console.log(`[CuttingBoard] Fetched ${joinedExamples.length} joined examples for training (${rows.length} total, filtered bad)`);
+        }
+      } catch (err) {
+        console.error('[CuttingBoard] Failed to fetch joined examples:', err);
+      }
+    }
+
     const url = `http://localhost:${config.serverPort}/api/plugins/cutting-board/command/train-model`;
-    const res = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' } });
+    const res = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ joinedExamples }),
+    });
     if (!res.ok) throw new Error(`Train model failed: ${res.status}`);
     const data = await res.json();
-    // Return the training result directly so the UI can use it
     return data.success ? data.result : data;
   });
 
@@ -321,6 +360,19 @@ export function registerCuttingBoardHandlers(): void {
   function getCutFinder(): CutFinder {
     if (!_cutFinder) {
       _cutFinder = new CutFinder();
+
+      // Start Supabase sync for cut-finder data
+      const config = loadConfig();
+      if (config.supabaseUrl && config.supabaseAnonKey) {
+        _cutFinderSync = new CutFinderSyncService();
+        _cutFinderSync.initialize({
+          supabaseUrl: config.supabaseUrl,
+          supabaseAnonKey: config.supabaseAnonKey,
+          machineId: config.machineId,
+        });
+        _cutFinderSync.startPeriodicSync(_cutFinder.database);
+        console.log('[CutFinderSync] Started periodic sync');
+      }
     }
     if (!_progressWired) {
       _progressWired = true;
@@ -381,6 +433,15 @@ export function registerCuttingBoardHandlers(): void {
 
   ipcMain.handle('cutFinder:export', (_e, options: CutFinderExportOptions) => {
     return getCutFinder().exportAnalysis(options);
+  });
+
+  ipcMain.handle('cutFinder:syncToSupabase', async () => {
+    getCutFinder(); // ensure initialized
+    if (_cutFinderSync) {
+      const pushed = await _cutFinderSync.pushCuts(getCutFinder().database);
+      return { pushed };
+    }
+    return { pushed: 0, error: 'Supabase not configured' };
   });
 
   fs.appendFileSync(debugLog, `All handlers registered OK\n`);

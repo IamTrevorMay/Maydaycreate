@@ -507,18 +507,51 @@ export default definePlugin({
       return { marked: ids.length };
     },
 
-    'train-model': async (ctx) => {
+    'train-model': async (ctx, args) => {
       if (!db) db = new CuttingBoardDB(ctx.dataDir);
 
       const records = db.getQualityRecords();
-      if (records.length < 30) {
-        ctx.ui.showToast(`Need at least 30 edits for training (have ${records.length})`, 'warning');
+      const examples = records.map(r => extractFeatures(r));
+
+      // Add joined examples from Supabase (passed by launcher IPC handler)
+      const joinedExamples = (args as { joinedExamples?: Array<{ editType: string; quality: string; weight: number; timestamp: number; tags: string[] }> })?.joinedExamples;
+      if (joinedExamples && joinedExamples.length > 0) {
+        for (const je of joinedExamples) {
+          examples.push({
+            id: 0,
+            editType: je.editType,
+            quality: je.quality as 'boosted' | 'good' | 'bad',
+            weight: je.weight,
+            context: {
+              clipName: '',
+              mediaPath: '',
+              trackIndex: 0,
+              trackType: 'video',
+              editPointTime: je.timestamp,
+              beforeDuration: null,
+              afterDuration: null,
+              neighborBefore: null,
+              neighborAfter: null,
+            },
+            action: {
+              editType: je.editType,
+              deltaDuration: null,
+              deltaStart: null,
+              deltaEnd: null,
+              splitRatio: 0.5,
+            },
+            timestamp: je.timestamp * 1000, // seconds to ms
+          });
+        }
+        ctx.log.info(`Added ${joinedExamples.length} joined examples (high/medium confidence)`);
+      }
+
+      if (examples.length < 30) {
+        ctx.ui.showToast(`Need at least 30 edits for training (have ${examples.length})`, 'warning');
         return null;
       }
 
-      const examples = records.map(r => extractFeatures(r));
-
-      ctx.log.info(`Training classifier on ${examples.length} examples...`);
+      ctx.log.info(`Training classifier on ${examples.length} examples (${records.length} local + ${joinedExamples?.length ?? 0} joined)...`);
       const { model: classifierJson, accuracy } = trainClassifier(examples);
 
       const regressorJsons: Record<string, object> = {};

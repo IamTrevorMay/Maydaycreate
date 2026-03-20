@@ -175,6 +175,8 @@ const mayday = {
       ipcRenderer.invoke('cutFinder:setIntentTags', cutId, tags),
     export: (options: CutFinderExportOptions): Promise<string> =>
       ipcRenderer.invoke('cutFinder:export', options),
+    syncToSupabase: (): Promise<{ pushed: number; error?: string }> =>
+      ipcRenderer.invoke('cutFinder:syncToSupabase'),
     onProgress: (cb: (progress: CutFinderProgress) => void) => {
       const handler = (_: unknown, progress: CutFinderProgress) => cb(progress);
       ipcRenderer.on('cutFinder:progress', handler);
