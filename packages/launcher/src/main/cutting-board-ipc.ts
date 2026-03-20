@@ -4,7 +4,7 @@ import fs from 'fs';
 import Database from 'better-sqlite3';
 import { createClient } from '@supabase/supabase-js';
 import { loadConfig } from './config-store.js';
-import { runCuttingBoardJoin } from './cutting-board-join.js';
+import { runCuttingBoardJoin, listAvailableDatasets } from './cutting-board-join.js';
 import { CutFinder } from './cutting-board-finder/cut-finder.js';
 import { CutFinderSyncService } from './cutting-board-finder/cut-finder-sync.js';
 import type { CuttingBoardAggregateStats, CuttingBoardTrainingRun, CutFinderExportOptions } from '@mayday/types';
@@ -348,8 +348,123 @@ export function registerCuttingBoardHandlers(): void {
     return data.success ? data.result : data;
   });
 
-  ipcMain.handle('cuttingBoard:joinModels', async (_e, videoId: string) => {
-    return runCuttingBoardJoin(videoId);
+  ipcMain.handle('cuttingBoard:cloudMergeTrain', async (_e, localResult: { version: number; accuracy: number; trainingSize: number }) => {
+    const config = loadConfig();
+    if (!config.supabaseUrl || !config.supabaseAnonKey) {
+      throw new Error('Supabase not configured — set URL and anon key in Settings.');
+    }
+
+    const supabase = createClient(config.supabaseUrl, config.supabaseAnonKey);
+    const serverBase = `http://localhost:${config.serverPort}/api/plugins/cutting-board/command`;
+
+    // 1. Get local training examples from the plugin
+    const exRes = await fetch(`${serverBase}/get-training-examples`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+    });
+    if (!exRes.ok) throw new Error('Failed to get local training examples');
+    const exData = await exRes.json();
+    const localExamples: Array<Record<string, unknown>> = exData.success ? exData.result : [];
+
+    console.log(`[CloudMerge] Got ${localExamples.length} local examples`);
+
+    // 2. Push local examples to Supabase
+    if (localExamples.length > 0) {
+      const rows = localExamples.map((ex: Record<string, unknown>) => ({
+        machine_id: config.machineId,
+        source_id: String((ex as { id?: number }).id || `local-${(ex as { timestamp?: number }).timestamp}`),
+        edit_type: (ex as { editType?: string }).editType || 'cut',
+        quality: (ex as { quality?: string }).quality || 'good',
+        weight: (ex as { weight?: number }).weight || 1,
+        context: (ex as { context?: unknown }).context || {},
+        action: (ex as { action?: unknown }).action || {},
+        timestamp: (ex as { timestamp?: number }).timestamp || 0,
+      }));
+
+      const BATCH = 500;
+      for (let i = 0; i < rows.length; i += BATCH) {
+        const batch = rows.slice(i, i + BATCH);
+        const { error } = await supabase
+          .from('training_examples')
+          .upsert(batch, { onConflict: 'machine_id,source_id' });
+        if (error) console.error('[CloudMerge] Push error:', error.message);
+      }
+      console.log(`[CloudMerge] Pushed ${rows.length} examples to Supabase`);
+    }
+
+    // 3. Fetch ALL training examples from Supabase (all machines)
+    const { data: cloudRows, error: fetchErr } = await supabase
+      .from('training_examples')
+      .select('*')
+      .neq('quality', 'bad');
+
+    if (fetchErr) throw new Error(`Failed to fetch cloud examples: ${fetchErr.message}`);
+
+    const cloudExamples = (cloudRows ?? []).map((r: Record<string, unknown>) => ({
+      id: 0,
+      editType: r.edit_type as string,
+      quality: r.quality as string,
+      weight: r.weight as number,
+      context: r.context,
+      action: r.action,
+      timestamp: r.timestamp as number,
+    }));
+
+    console.log(`[CloudMerge] Fetched ${cloudExamples.length} cloud examples from all machines`);
+
+    // 4. Retrain from the combined cloud dataset
+    const trainRes = await fetch(`${serverBase}/train-from-examples`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ examples: cloudExamples, label: 'cloud-merge' }),
+    });
+    if (!trainRes.ok) throw new Error('Cloud retrain failed');
+    const trainData = await trainRes.json();
+    const cloudResult = trainData.success ? trainData.result : null;
+
+    if (!cloudResult) throw new Error('Cloud retrain returned no result');
+
+    // 5. Push the cloud-trained model to autocut_models
+    const modelRes = await fetch(`${serverBase}/get-model-data`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+    });
+    if (modelRes.ok) {
+      const modelData = await modelRes.json();
+      if (modelData.success && modelData.result) {
+        const model = modelData.result;
+        await supabase
+          .from('autocut_models')
+          .upsert({
+            machine_id: config.machineId,
+            machine_name: config.machineName,
+            version: model.version,
+            trained_at: model.trainedAt,
+            training_size: model.trainingSize,
+            accuracy: model.accuracy,
+            model_json: { classifier: model.classifier, regressors: model.regressors },
+            uploaded_at: new Date().toISOString(),
+          }, { onConflict: 'machine_id,version' });
+
+        console.log(`[CloudMerge] Pushed cloud model v${model.version} to Supabase`);
+      }
+    }
+
+    return {
+      cloudAccuracy: cloudResult.accuracy,
+      cloudTrainingSize: cloudResult.trainingSize,
+      cloudVersion: cloudResult.version,
+      localAccuracy: localResult.accuracy,
+      localTrainingSize: localResult.trainingSize,
+    };
+  });
+
+  ipcMain.handle('cuttingBoard:joinModels', async (_e, modelAVideoId: string, modelBVideoId: string) => {
+    return runCuttingBoardJoin(modelAVideoId, modelBVideoId);
+  });
+
+  ipcMain.handle('cuttingBoard:listDatasets', async () => {
+    return listAvailableDatasets();
   });
 
   // ── Cut Finder IPC handlers ─────────────────────────────────────────────

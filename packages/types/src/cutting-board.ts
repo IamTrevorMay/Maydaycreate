@@ -19,6 +19,8 @@ export interface CuttingBoardAggregateStats {
 
 export interface CuttingBoardJoinResult {
   videoId: string;
+  modelAVideoId: string;
+  modelBVideoId: string;
   totalModelA: number;
   totalModelB: number;
   matched: number;

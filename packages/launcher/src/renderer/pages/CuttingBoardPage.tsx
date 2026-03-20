@@ -21,7 +21,7 @@ const CONFIDENCE_COLORS: Record<string, string> = {
 };
 
 export function CuttingBoardPage(): React.ReactElement {
-  const { stats, trainingRuns, training, trainModel } = useCuttingBoard();
+  const { stats, trainingRuns, training, trainModel, postTrainResult, merging, mergeResult, cloudMergeTrain, dismissPostTrain } = useCuttingBoard();
 
   return (
     <div style={{ padding: 20, maxWidth: 700 }}>
@@ -32,7 +32,7 @@ export function CuttingBoardPage(): React.ReactElement {
       <JoinModelsSection />
 
       {/* Cut-watcher stats below */}
-      {stats && <CutWatcherStats stats={stats} trainingRuns={trainingRuns} training={training} trainModel={trainModel} />}
+      {stats && <CutWatcherStats stats={stats} trainingRuns={trainingRuns} training={training} trainModel={trainModel} postTrainResult={postTrainResult} merging={merging} mergeResult={mergeResult} cloudMergeTrain={cloudMergeTrain} dismissPostTrain={dismissPostTrain} />}
 
       {!stats && (
         <Section title="Cut-Watcher">
@@ -298,14 +298,40 @@ function CutFinderSection(): React.ReactElement {
 
 function JoinModelsSection(): React.ReactElement {
   const ipc = useIpc();
-  const [videoId, setVideoId] = useState('');
+  const [modelADatasets, setModelADatasets] = useState<Array<{ videoId: string; count: number }>>([]);
+  const [modelBDatasets, setModelBDatasets] = useState<Array<{ videoId: string; count: number }>>([]);
+  const [selectedA, setSelectedA] = useState('');
+  const [selectedB, setSelectedB] = useState('');
   const [running, setRunning] = useState(false);
   const [result, setResult] = useState<CuttingBoardJoinResult | null>(null);
   const [error, setError] = useState('');
   const [syncing, setSyncing] = useState(false);
+  const [loading, setLoading] = useState(true);
+
+  // Load available datasets on mount and after sync
+  const loadDatasets = useCallback(async () => {
+    try {
+      const ds = await ipc.cuttingBoard.listDatasets();
+      setModelADatasets(ds.modelA);
+      setModelBDatasets(ds.modelB);
+    } catch {
+      // Supabase may not be configured
+    } finally {
+      setLoading(false);
+    }
+  }, [ipc]);
+
+  useEffect(() => { loadDatasets(); }, [loadDatasets]);
+
+  // Auto-select Model B when a cut-finder analysis completes (pick first available)
+  useEffect(() => {
+    if (modelBDatasets.length > 0 && !selectedB) {
+      setSelectedB(modelBDatasets[0].videoId);
+    }
+  }, [modelBDatasets, selectedB]);
 
   const runJoin = useCallback(async () => {
-    if (!videoId.trim()) return;
+    if (!selectedA || !selectedB) return;
     setRunning(true);
     setError('');
     setResult(null);
@@ -314,12 +340,13 @@ function JoinModelsSection(): React.ReactElement {
       setSyncing(true);
       try {
         await ipc.cutFinder.syncToSupabase();
-      } catch {
-        // Sync may fail if Supabase isn't configured — continue with join anyway
-      }
+      } catch {}
       setSyncing(false);
 
-      const r = await ipc.cuttingBoard.joinModels(videoId.trim());
+      // Refresh datasets in case sync added new data
+      await loadDatasets();
+
+      const r = await ipc.cuttingBoard.joinModels(selectedA, selectedB);
       setResult(r);
     } catch (err) {
       setError((err as Error).message || 'Join failed');
@@ -327,117 +354,168 @@ function JoinModelsSection(): React.ReactElement {
       setRunning(false);
       setSyncing(false);
     }
-  }, [videoId, ipc]);
+  }, [selectedA, selectedB, ipc, loadDatasets]);
 
+  const canJoin = selectedA && selectedB && !running;
   const total = result ? result.matched + result.unmatchedA + result.unmatchedB : 0;
+
+  const selectStyle: React.CSSProperties = {
+    flex: 1,
+    padding: '6px 10px',
+    background: c.bg.tertiary,
+    border: `1px solid ${c.border.default}`,
+    borderRadius: 4,
+    color: c.text.primary,
+    fontSize: 12,
+    outline: 'none',
+    appearance: 'none' as const,
+    WebkitAppearance: 'none' as const,
+    cursor: 'pointer',
+  };
 
   return (
     <Section title="Join Models">
-      <div style={{ display: 'flex', gap: 8, marginBottom: 10 }}>
-        <input
-          type="text"
-          value={videoId}
-          onChange={e => setVideoId(e.target.value)}
-          onKeyDown={e => e.key === 'Enter' && runJoin()}
-          placeholder="Video ID (e.g. dQw4w9WgXcQ or ep047)"
-          style={{
-            flex: 1,
-            padding: '6px 10px',
-            background: c.bg.tertiary,
-            border: `1px solid ${c.border.default}`,
-            borderRadius: 4,
-            color: c.text.primary,
-            fontSize: 12,
-            outline: 'none',
-          }}
-        />
-        <button
-          onClick={runJoin}
-          disabled={!videoId.trim() || running}
-          style={{
-            padding: '6px 16px',
-            background: videoId.trim() && !running ? c.accent.primary : c.bg.tertiary,
-            color: videoId.trim() && !running ? '#fff' : c.text.disabled,
-            border: 'none',
-            borderRadius: 4,
-            fontSize: 12,
-            fontWeight: 600,
-            cursor: videoId.trim() && !running ? 'pointer' : 'default',
-          }}
-        >
-          {syncing ? 'Syncing...' : running ? 'Joining...' : 'Join'}
-        </button>
-      </div>
+      {loading ? (
+        <div style={{ fontSize: 11, color: c.text.disabled }}>Loading datasets from Supabase...</div>
+      ) : (
+        <>
+          {/* Pairing selectors */}
+          <div style={{ display: 'flex', gap: 8, marginBottom: 10, alignItems: 'center' }}>
+            {/* Model B (Finder) — auto-populated from analyses */}
+            <div style={{ flex: 1 }}>
+              <div style={{ fontSize: 9, color: c.text.secondary, marginBottom: 3 }}>Finder (video analysis)</div>
+              {modelBDatasets.length > 0 ? (
+                <select
+                  value={selectedB}
+                  onChange={e => setSelectedB(e.target.value)}
+                  style={selectStyle}
+                >
+                  <option value="">Select...</option>
+                  {modelBDatasets.map(d => (
+                    <option key={d.videoId} value={d.videoId}>{d.videoId} ({d.count} cuts)</option>
+                  ))}
+                </select>
+              ) : (
+                <div style={{ ...selectStyle, color: c.text.disabled, cursor: 'default' }}>No analyses synced yet</div>
+              )}
+            </div>
 
-      {error && <div style={{ color: c.status.error, fontSize: 11, marginBottom: 8 }}>{error}</div>}
+            <span style={{ color: c.text.disabled, fontSize: 14, paddingTop: 14 }}>{'\u2194'}</span>
 
-      {result && (
-        <div>
-          {/* Summary stats */}
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 8, marginBottom: 12 }}>
-            <div style={{ textAlign: 'center' }}>
-              <div style={{ fontSize: 18, fontWeight: 700, color: c.status.success }}>{result.matched}</div>
-              <div style={{ fontSize: 9, color: c.text.secondary }}>Matched</div>
+            {/* Model A (Watcher) — dropdown of available datasets */}
+            <div style={{ flex: 1 }}>
+              <div style={{ fontSize: 9, color: c.text.secondary, marginBottom: 3 }}>Watcher (live edits)</div>
+              {modelADatasets.length > 0 ? (
+                <select
+                  value={selectedA}
+                  onChange={e => setSelectedA(e.target.value)}
+                  style={selectStyle}
+                >
+                  <option value="">Select...</option>
+                  {modelADatasets.map(d => (
+                    <option key={d.videoId} value={d.videoId}>{d.videoId} ({d.count} cuts)</option>
+                  ))}
+                </select>
+              ) : (
+                <div style={{ ...selectStyle, color: c.text.disabled, cursor: 'default' }}>No watcher data yet</div>
+              )}
             </div>
-            <div style={{ textAlign: 'center' }}>
-              <div style={{ fontSize: 18, fontWeight: 700, color: c.text.primary }}>{result.unmatchedA}</div>
-              <div style={{ fontSize: 9, color: c.text.secondary }}>Watcher only</div>
-            </div>
-            <div style={{ textAlign: 'center' }}>
-              <div style={{ fontSize: 18, fontWeight: 700, color: c.text.primary }}>{result.unmatchedB}</div>
-              <div style={{ fontSize: 9, color: c.text.secondary }}>Finder only</div>
-            </div>
-            <div style={{ textAlign: 'center' }}>
-              <div style={{ fontSize: 18, fontWeight: 700, color: c.accent.primary }}>{result.written}</div>
-              <div style={{ fontSize: 9, color: c.text.secondary }}>Written</div>
-            </div>
+
+            <button
+              onClick={runJoin}
+              disabled={!canJoin}
+              style={{
+                padding: '6px 16px',
+                marginTop: 14,
+                background: canJoin ? c.accent.primary : c.bg.tertiary,
+                color: canJoin ? '#fff' : c.text.disabled,
+                border: 'none',
+                borderRadius: 4,
+                fontSize: 12,
+                fontWeight: 600,
+                cursor: canJoin ? 'pointer' : 'default',
+                flexShrink: 0,
+              }}
+            >
+              {syncing ? 'Syncing...' : running ? 'Joining...' : 'Join'}
+            </button>
           </div>
 
-          {/* Confidence tier breakdown */}
-          {total > 0 && (
-            <div style={{ marginBottom: 8 }}>
-              <div style={{ fontSize: 10, color: c.text.secondary, marginBottom: 4 }}>Confidence Tiers</div>
-              <div style={{ display: 'flex', height: 20, borderRadius: 4, overflow: 'hidden' }}>
-                {result.matched > 0 && (
-                  <div
-                    style={{
-                      flex: result.matched,
-                      background: c.status.success,
-                      display: 'flex', alignItems: 'center', justifyContent: 'center',
-                      fontSize: 9, color: '#000', fontWeight: 600,
-                    }}
-                    title={`High: ${result.matched} matched with tags`}
-                  >
-                    {result.matched > 0 ? 'high' : ''}
+          {error && <div style={{ color: c.status.error, fontSize: 11, marginBottom: 8 }}>{error}</div>}
+
+          {result && (
+            <div>
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 8, marginBottom: 12 }}>
+                <div style={{ textAlign: 'center' }}>
+                  <div style={{ fontSize: 18, fontWeight: 700, color: c.status.success }}>{result.matched}</div>
+                  <div style={{ fontSize: 9, color: c.text.secondary }}>Matched</div>
+                </div>
+                <div style={{ textAlign: 'center' }}>
+                  <div style={{ fontSize: 18, fontWeight: 700, color: c.text.primary }}>{result.unmatchedA}</div>
+                  <div style={{ fontSize: 9, color: c.text.secondary }}>Watcher only</div>
+                </div>
+                <div style={{ textAlign: 'center' }}>
+                  <div style={{ fontSize: 18, fontWeight: 700, color: c.text.primary }}>{result.unmatchedB}</div>
+                  <div style={{ fontSize: 9, color: c.text.secondary }}>Finder only</div>
+                </div>
+                <div style={{ textAlign: 'center' }}>
+                  <div style={{ fontSize: 18, fontWeight: 700, color: c.accent.primary }}>{result.written}</div>
+                  <div style={{ fontSize: 9, color: c.text.secondary }}>Written</div>
+                </div>
+              </div>
+
+              {total > 0 && (
+                <div style={{ marginBottom: 8 }}>
+                  <div style={{ fontSize: 10, color: c.text.secondary, marginBottom: 4 }}>Confidence Tiers</div>
+                  <div style={{ display: 'flex', height: 20, borderRadius: 4, overflow: 'hidden' }}>
+                    {result.matched > 0 && (
+                      <div
+                        style={{
+                          flex: result.matched,
+                          background: c.status.success,
+                          display: 'flex', alignItems: 'center', justifyContent: 'center',
+                          fontSize: 9, color: '#000', fontWeight: 600,
+                        }}
+                        title={`High: ${result.matched} matched`}
+                      >
+                        high
+                      </div>
+                    )}
+                    {(result.unmatchedA + result.unmatchedB) > 0 && (
+                      <div
+                        style={{
+                          flex: result.unmatchedA + result.unmatchedB,
+                          background: c.status.warning,
+                          display: 'flex', alignItems: 'center', justifyContent: 'center',
+                          fontSize: 9, color: '#000', fontWeight: 600,
+                        }}
+                        title={`Medium/Low: ${result.unmatchedA + result.unmatchedB} unmatched`}
+                      >
+                        med/low
+                      </div>
+                    )}
                   </div>
-                )}
-                {(result.unmatchedA + result.unmatchedB) > 0 && (
-                  <div
-                    style={{
-                      flex: result.unmatchedA + result.unmatchedB,
-                      background: c.status.warning,
-                      display: 'flex', alignItems: 'center', justifyContent: 'center',
-                      fontSize: 9, color: '#000', fontWeight: 600,
-                    }}
-                    title={`Medium/Low: ${result.unmatchedA + result.unmatchedB} unmatched`}
-                  >
-                    med/low
-                  </div>
-                )}
+                </div>
+              )}
+
+              <div style={{ fontSize: 10, color: c.text.disabled }}>
+                Watcher ({result.modelAVideoId}): {result.totalModelA} cuts | Finder ({result.modelBVideoId}): {result.totalModelB} cuts
               </div>
             </div>
           )}
 
-          <div style={{ fontSize: 10, color: c.text.disabled }}>
-            Model A: {result.totalModelA} cuts from live editing | Model B: {result.totalModelB} cuts from video analysis
-          </div>
-        </div>
-      )}
+          {!result && !running && (modelADatasets.length > 0 || modelBDatasets.length > 0) && (
+            <div style={{ fontSize: 11, color: c.text.disabled }}>
+              Select a Finder analysis and a Watcher dataset to pair, then click Join.
+            </div>
+          )}
 
-      {!result && !running && (
-        <div style={{ fontSize: 11, color: c.text.disabled }}>
-          Enter a video ID to match cuts from both models and write joined records to Supabase.
-        </div>
+          {!result && !running && modelADatasets.length === 0 && modelBDatasets.length === 0 && (
+            <div style={{ fontSize: 11, color: c.text.disabled }}>
+              Analyze a video in Cut Finder and record edits in Premiere to create datasets for joining.
+            </div>
+          )}
+        </>
       )}
     </Section>
   );
@@ -674,11 +752,16 @@ function CutRow({ cut, ipc, reviewed, onReviewed, onUpdated }: {
 
 // ── Cut-Watcher Stats ─────────────────────────────────────────────────────
 
-function CutWatcherStats({ stats, trainingRuns, training, trainModel }: {
+function CutWatcherStats({ stats, trainingRuns, training, trainModel, postTrainResult, merging, mergeResult, cloudMergeTrain, dismissPostTrain }: {
   stats: NonNullable<ReturnType<typeof useCuttingBoard>['stats']>;
   trainingRuns: ReturnType<typeof useCuttingBoard>['trainingRuns'];
   training: boolean;
   trainModel: () => void;
+  postTrainResult: ReturnType<typeof useCuttingBoard>['postTrainResult'];
+  merging: boolean;
+  mergeResult: ReturnType<typeof useCuttingBoard>['mergeResult'];
+  cloudMergeTrain: () => void;
+  dismissPostTrain: () => void;
 }): React.ReactElement {
   const maxTypeCount = Math.max(1, ...Object.values(stats.editsByType));
   const latestRun = trainingRuns[0] ?? null;
@@ -803,24 +886,127 @@ function CutWatcherStats({ stats, trainingRuns, training, trainModel }: {
           <div style={{ color: c.text.secondary, fontSize: 12, marginBottom: 12 }}>No model trained yet.</div>
         )}
 
-        <button
-          onClick={trainModel}
-          disabled={training}
-          style={{
-            padding: '8px 20px',
-            background: training ? c.bg.tertiary : c.accent.primary,
-            color: training ? c.text.disabled : '#fff',
-            border: 'none',
-            borderRadius: 4,
-            fontSize: 12,
-            fontWeight: 600,
-            cursor: training ? 'default' : 'pointer',
-            marginBottom: training ? 8 : 16,
-          }}
-        >
-          {training ? 'Training...' : 'Train Model'}
-        </button>
-        {training && <TrainingProgress />}
+        {/* Post-training: Keep Local or Push to Cloud */}
+        {postTrainResult && !mergeResult && !merging && (
+          <div style={{
+            background: '#1e3a5f22',
+            border: `1px solid ${c.accent.primary}44`,
+            borderRadius: 6,
+            padding: 12,
+            marginBottom: 12,
+          }}>
+            <div style={{ fontSize: 12, color: c.text.primary, fontWeight: 600, marginBottom: 8 }}>
+              Model v{postTrainResult.version} trained: {(postTrainResult.accuracy * 100).toFixed(1)}% on {postTrainResult.trainingSize} examples
+            </div>
+            <div style={{ display: 'flex', gap: 8 }}>
+              <button
+                onClick={dismissPostTrain}
+                style={{
+                  padding: '6px 16px',
+                  background: c.bg.tertiary,
+                  border: `1px solid ${c.border.default}`,
+                  borderRadius: 4,
+                  color: c.text.primary,
+                  fontSize: 11,
+                  fontWeight: 600,
+                  cursor: 'pointer',
+                }}
+              >
+                Keep Local
+              </button>
+              <button
+                onClick={cloudMergeTrain}
+                style={{
+                  padding: '6px 16px',
+                  background: c.accent.primary,
+                  border: 'none',
+                  borderRadius: 4,
+                  color: '#fff',
+                  fontSize: 11,
+                  fontWeight: 600,
+                  cursor: 'pointer',
+                }}
+              >
+                Push to Cloud
+              </button>
+            </div>
+            <div style={{ fontSize: 10, color: c.text.disabled, marginTop: 6 }}>
+              Push to Cloud merges your training data with all machines and retrains a shared model.
+            </div>
+          </div>
+        )}
+
+        {/* Merging in progress */}
+        {merging && (
+          <div style={{ marginBottom: 12 }}>
+            <div style={{ fontSize: 11, color: c.text.secondary, marginBottom: 4 }}>Merging with cloud data...</div>
+            <TrainingProgress />
+          </div>
+        )}
+
+        {/* Merge result comparison */}
+        {mergeResult && (
+          <div style={{
+            background: '#1b433222',
+            border: `1px solid ${c.status.success}44`,
+            borderRadius: 6,
+            padding: 12,
+            marginBottom: 12,
+          }}>
+            <div style={{ fontSize: 11, color: c.text.secondary, fontWeight: 600, marginBottom: 8 }}>Cloud Merge Complete</div>
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, marginBottom: 8 }}>
+              <div style={{ textAlign: 'center', padding: 8, background: c.bg.tertiary, borderRadius: 4 }}>
+                <div style={{ fontSize: 9, color: c.text.disabled, marginBottom: 2 }}>Local</div>
+                <div style={{ fontSize: 20, fontWeight: 700, color: c.text.primary }}>{(mergeResult.localAccuracy * 100).toFixed(1)}%</div>
+                <div style={{ fontSize: 10, color: c.text.secondary }}>{mergeResult.localTrainingSize} examples</div>
+              </div>
+              <div style={{ textAlign: 'center', padding: 8, background: c.bg.tertiary, borderRadius: 4, border: `1px solid ${c.status.success}44` }}>
+                <div style={{ fontSize: 9, color: c.status.success, marginBottom: 2 }}>Cloud (active)</div>
+                <div style={{ fontSize: 20, fontWeight: 700, color: c.status.success }}>{(mergeResult.cloudAccuracy * 100).toFixed(1)}%</div>
+                <div style={{ fontSize: 10, color: c.text.secondary }}>{mergeResult.cloudTrainingSize} examples</div>
+              </div>
+            </div>
+            <button
+              onClick={dismissPostTrain}
+              style={{
+                padding: '6px 16px',
+                background: c.accent.primary,
+                border: 'none',
+                borderRadius: 4,
+                color: '#fff',
+                fontSize: 11,
+                fontWeight: 600,
+                cursor: 'pointer',
+              }}
+            >
+              Done
+            </button>
+          </div>
+        )}
+
+        {/* Train button — hidden during post-train flow */}
+        {!postTrainResult && !merging && !mergeResult && (
+          <>
+            <button
+              onClick={trainModel}
+              disabled={training}
+              style={{
+                padding: '8px 20px',
+                background: training ? c.bg.tertiary : c.accent.primary,
+                color: training ? c.text.disabled : '#fff',
+                border: 'none',
+                borderRadius: 4,
+                fontSize: 12,
+                fontWeight: 600,
+                cursor: training ? 'default' : 'pointer',
+                marginBottom: training ? 8 : 16,
+              }}
+            >
+              {training ? 'Training...' : 'Train Model'}
+            </button>
+            {training && <TrainingProgress />}
+          </>
+        )}
 
         {trainingRuns.length > 0 && (
           <div>

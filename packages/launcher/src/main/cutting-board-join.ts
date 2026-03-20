@@ -35,12 +35,19 @@ export interface JoinedRecord {
 
 export interface JoinResult {
   videoId: string;
+  modelAVideoId: string;
+  modelBVideoId: string;
   totalModelA: number;
   totalModelB: number;
   matched: number;
   unmatchedA: number;
   unmatchedB: number;
   written: number;
+}
+
+export interface AvailableDatasets {
+  modelA: Array<{ videoId: string; count: number }>;
+  modelB: Array<{ videoId: string; count: number }>;
 }
 
 function deriveRating(record: ModelARecord): string {
@@ -61,13 +68,9 @@ function deriveConfidenceTier(matched: boolean, tags: string[]): ConfidenceTier 
 }
 
 /**
- * Join Model A (cut-watcher) and Model B (cut-finder) records for a video.
- *
- * Uses a greedy nearest-neighbor match: sort both lists by timestamp,
- * scan with two pointers, and pair the closest records within MATCH_WINDOW.
- * Each record is matched at most once.
+ * List available video IDs from both models in Supabase.
  */
-export async function runCuttingBoardJoin(videoId: string): Promise<JoinResult> {
+export async function listAvailableDatasets(): Promise<AvailableDatasets> {
   const config = loadConfig();
   if (!config.supabaseUrl || !config.supabaseAnonKey) {
     throw new Error('Supabase not configured — set URL and anon key in Settings.');
@@ -75,11 +78,61 @@ export async function runCuttingBoardJoin(videoId: string): Promise<JoinResult> 
 
   const supabase = createClient(config.supabaseUrl, config.supabaseAnonKey);
 
+  const { data: aRows } = await supabase
+    .from('cut_records')
+    .select('video_id')
+    .not('video_id', 'is', null);
+
+  const { data: bRows } = await supabase
+    .from('cf_cuts')
+    .select('video_id')
+    .not('video_id', 'is', null);
+
+  // Count per video_id
+  const aCounts: Record<string, number> = {};
+  for (const r of aRows ?? []) {
+    const vid = r.video_id as string;
+    aCounts[vid] = (aCounts[vid] || 0) + 1;
+  }
+
+  const bCounts: Record<string, number> = {};
+  for (const r of bRows ?? []) {
+    const vid = r.video_id as string;
+    bCounts[vid] = (bCounts[vid] || 0) + 1;
+  }
+
+  return {
+    modelA: Object.entries(aCounts).map(([videoId, count]) => ({ videoId, count })).sort((a, b) => b.count - a.count),
+    modelB: Object.entries(bCounts).map(([videoId, count]) => ({ videoId, count })).sort((a, b) => b.count - a.count),
+  };
+}
+
+/**
+ * Join Model A (cut-watcher) and Model B (cut-finder) records.
+ *
+ * Accepts separate video IDs for each model so datasets recorded under
+ * different IDs can be paired (e.g. "ep047" from live editing paired
+ * with "KWh0HtMCFTQ" from the YouTube upload).
+ *
+ * Uses a greedy nearest-neighbor match: build candidate pairs within
+ * MATCH_WINDOW, sort by proximity, assign closest first.
+ */
+export async function runCuttingBoardJoin(modelAVideoId: string, modelBVideoId: string): Promise<JoinResult> {
+  const config = loadConfig();
+  if (!config.supabaseUrl || !config.supabaseAnonKey) {
+    throw new Error('Supabase not configured — set URL and anon key in Settings.');
+  }
+
+  // Use the Model B video ID as the canonical video_id in the joined table
+  const videoId = modelBVideoId;
+
+  const supabase = createClient(config.supabaseUrl, config.supabaseAnonKey);
+
   // ── Fetch Model A records (cut-watcher) ────────────────────────────────
   const { data: rawA, error: errA } = await supabase
     .from('cut_records')
     .select('id, edit_point_time, rating, boosted, intent_tags')
-    .eq('video_id', videoId)
+    .eq('video_id', modelAVideoId)
     .order('edit_point_time', { ascending: true });
 
   if (errA) throw new Error(`Failed to fetch cut_records: ${errA.message}`);
@@ -96,7 +149,7 @@ export async function runCuttingBoardJoin(videoId: string): Promise<JoinResult> 
   const { data: rawB, error: errB } = await supabase
     .from('cf_cuts')
     .select('id, timestamp, confidence, intent_tags')
-    .eq('video_id', videoId)
+    .eq('video_id', modelBVideoId)
     .order('timestamp', { ascending: true });
 
   if (errB) throw new Error(`Failed to fetch cf_cuts: ${errB.message}`);
@@ -218,6 +271,8 @@ export async function runCuttingBoardJoin(videoId: string): Promise<JoinResult> 
 
   const result: JoinResult = {
     videoId,
+    modelAVideoId,
+    modelBVideoId,
     totalModelA: modelA.length,
     totalModelB: modelB.length,
     matched: finalPairs.length,
@@ -226,6 +281,6 @@ export async function runCuttingBoardJoin(videoId: string): Promise<JoinResult> 
     written,
   };
 
-  console.log(`[CuttingBoardJoin] ${videoId}: ${result.matched} matched, ${result.unmatchedA} A-only, ${result.unmatchedB} B-only → ${written} rows written`);
+  console.log(`[CuttingBoardJoin] A:${modelAVideoId} + B:${modelBVideoId} → ${result.matched} matched, ${result.unmatchedA} A-only, ${result.unmatchedB} B-only → ${written} rows written`);
   return result;
 }

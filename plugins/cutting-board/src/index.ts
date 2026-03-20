@@ -588,6 +588,63 @@ export default definePlugin({
       return { version, accuracy, trainingSize: examples.length, regressors: Object.keys(regressorJsons) };
     },
 
+    'get-training-examples': async (ctx) => {
+      if (!db) db = new CuttingBoardDB(ctx.dataDir);
+      const records = db.getQualityRecords();
+      return records.map(r => extractFeatures(r));
+    },
+
+    'train-from-examples': async (ctx, args) => {
+      if (!db) db = new CuttingBoardDB(ctx.dataDir);
+      const { examples, label } = args as { examples: Array<Record<string, unknown>>; label?: string };
+
+      // Reconstitute TrainingExample objects from the serialized data
+      const typed = examples.map(e => ({
+        id: (e.id as number) || 0,
+        editType: e.editType as string || e.edit_type as string || 'cut',
+        quality: (e.quality as 'boosted' | 'good' | 'bad') || 'good',
+        weight: (e.weight as number) || 1,
+        context: e.context as Record<string, unknown> || {},
+        action: e.action as Record<string, unknown> || {},
+        timestamp: (e.timestamp as number) || 0,
+      })) as unknown as import('./pipeline.js').TrainingExample[];
+
+      if (typed.length < 30) {
+        ctx.ui.showToast(`Need at least 30 examples (have ${typed.length})`, 'warning');
+        return null;
+      }
+
+      const source = label || 'cloud';
+      ctx.log.info(`Training from ${typed.length} ${source} examples...`);
+      const { model: classifierJson, accuracy } = trainClassifier(typed);
+
+      const regressorJsons: Record<string, object> = {};
+      for (const editType of ['cut', 'trim-head', 'trim-tail', 'delete', 'move', 'add']) {
+        const regressorJson = trainRegressor(editType, typed);
+        if (regressorJson) {
+          regressorJsons[editType] = regressorJson;
+        }
+      }
+
+      const latestRun = db.getLatestTrainingRun();
+      const version = (latestRun?.version ?? 0) + 1;
+
+      const serialized: SerializedModel = {
+        version,
+        trainedAt: Date.now(),
+        trainingSize: typed.length,
+        accuracy,
+        classifier: classifierJson,
+        regressors: regressorJsons,
+      };
+
+      saveModel(serialized, ctx.dataDir);
+      db.recordTrainingRun(typed.length, accuracy, version);
+
+      ctx.log.info(`${source} model v${version}: ${(accuracy * 100).toFixed(1)}% on ${typed.length} examples`);
+      return { version, accuracy, trainingSize: typed.length, regressors: Object.keys(regressorJsons) };
+    },
+
     'get-model-data': async (ctx) => {
       const serialized = loadModel(ctx.dataDir);
       if (!serialized) return null;

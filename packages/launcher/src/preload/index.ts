@@ -148,8 +148,17 @@ const mayday = {
       ipcRenderer.invoke('cuttingBoard:getTrainingRuns'),
     trainModel: (): Promise<unknown> =>
       ipcRenderer.invoke('cuttingBoard:trainModel'),
-    joinModels: (videoId: string): Promise<CuttingBoardJoinResult> =>
-      ipcRenderer.invoke('cuttingBoard:joinModels', videoId),
+    joinModels: (modelAVideoId: string, modelBVideoId: string): Promise<CuttingBoardJoinResult> =>
+      ipcRenderer.invoke('cuttingBoard:joinModels', modelAVideoId, modelBVideoId),
+    cloudMergeTrain: (localResult: { version: number; accuracy: number; trainingSize: number }): Promise<{
+      cloudAccuracy: number;
+      cloudTrainingSize: number;
+      cloudVersion: number;
+      localAccuracy: number;
+      localTrainingSize: number;
+    }> => ipcRenderer.invoke('cuttingBoard:cloudMergeTrain', localResult),
+    listDatasets: (): Promise<{ modelA: Array<{ videoId: string; count: number }>; modelB: Array<{ videoId: string; count: number }> }> =>
+      ipcRenderer.invoke('cuttingBoard:listDatasets'),
   },
 
   cutFinder: {
