@@ -50,14 +50,12 @@ jobs:
 
       - name: Build and package Electron app
         env:
-          # electron-builder handles code signing via these env vars
           CSC_LINK: ${{ secrets.MACOS_CERTIFICATE }}
           CSC_KEY_PASSWORD: ${{ secrets.MACOS_CERTIFICATE_PWD }}
-          # Notarization disabled for now — remove these to prevent electron-builder from attempting it
-          # APPLE_ID: ${{ secrets.APPLE_ID }}
-          # APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
-          # APPLE_TEAM_ID: XF99392HXQ
-        run: npm run package:launcher
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # Tell electron-builder to build only, not publish — we use softprops/action-gh-release instead
+          PUBLISH: never
+        run: cd packages/launcher && npm run build && npx electron-builder --publish never
 
       - name: Extract version from tag
         id: version
