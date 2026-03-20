@@ -29,34 +29,34 @@ jobs:
       - name: Build all workspace packages
         run: npm run build
 
-      - name: Import code signing certificate
+      - name: Validate signing secrets exist
+        run: |
+          if [ -z "$MACOS_CERTIFICATE" ]; then
+            echo "::error::MACOS_CERTIFICATE secret is empty — set it in repo Settings → Secrets"
+            exit 1
+          fi
+          # Quick sanity check: decode and verify it's a valid PKCS12
+          echo -n "$MACOS_CERTIFICATE" | base64 --decode > /tmp/test_cert.p12
+          FILESIZE=$(stat -f%z /tmp/test_cert.p12 2>/dev/null || stat -c%s /tmp/test_cert.p12)
+          echo "Certificate file size: $FILESIZE bytes"
+          if [ "$FILESIZE" -lt 100 ]; then
+            echo "::error::MACOS_CERTIFICATE decoded to only $FILESIZE bytes — likely corrupted or truncated"
+            exit 1
+          fi
+          rm -f /tmp/test_cert.p12
+          echo "Certificate secret looks valid ($FILESIZE bytes)"
         env:
           MACOS_CERTIFICATE: ${{ secrets.MACOS_CERTIFICATE }}
-          MACOS_CERTIFICATE_PWD: ${{ secrets.MACOS_CERTIFICATE_PWD }}
-          KEYCHAIN_PASSWORD: ${{ secrets.KEYCHAIN_PASSWORD }}
-        run: |
-          CERTIFICATE_PATH=$RUNNER_TEMP/build_certificate.p12
-          KEYCHAIN_PATH=$RUNNER_TEMP/app-signing.keychain-db
-
-          echo -n "$MACOS_CERTIFICATE" | base64 --decode -o $CERTIFICATE_PATH
-
-          security create-keychain -p "$KEYCHAIN_PASSWORD" $KEYCHAIN_PATH
-          security set-keychain-settings -lut 21600 $KEYCHAIN_PATH
-          security unlock-keychain -p "$KEYCHAIN_PASSWORD" $KEYCHAIN_PATH
-
-          security import $CERTIFICATE_PATH -P "$MACOS_CERTIFICATE_PWD" \
-            -A -t cert -f pkcs12 -k $KEYCHAIN_PATH
-          security set-key-partition-list -S apple-tool:,apple: \
-            -k "$KEYCHAIN_PASSWORD" $KEYCHAIN_PATH
-          security list-keychain -d user -s $KEYCHAIN_PATH
 
       - name: Build and package Electron app
         env:
+          # electron-builder handles code signing via these env vars
+          CSC_LINK: ${{ secrets.MACOS_CERTIFICATE }}
+          CSC_KEY_PASSWORD: ${{ secrets.MACOS_CERTIFICATE_PWD }}
+          # Notarization
           APPLE_ID: ${{ secrets.APPLE_ID }}
           APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
           APPLE_TEAM_ID: XF99392HXQ
-          CSC_LINK: ${{ secrets.MACOS_CERTIFICATE }}
-          CSC_KEY_PASSWORD: ${{ secrets.MACOS_CERTIFICATE_PWD }}
         run: npm run package:launcher
 
       - name: Extract version from tag
@@ -76,7 +76,3 @@ jobs:
             packages/launcher/release/latest-mac.yml
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Cleanup keychain
-        if: always()
-        run: security delete-keychain $RUNNER_TEMP/app-signing.keychain-db
