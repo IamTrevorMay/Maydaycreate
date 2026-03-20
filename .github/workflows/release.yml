@@ -29,33 +29,59 @@ jobs:
       - name: Build all workspace packages
         run: npm run build
 
-      - name: Validate signing secrets exist
+      - name: Validate signing secrets
         run: |
           if [ -z "$MACOS_CERTIFICATE" ]; then
-            echo "::error::MACOS_CERTIFICATE secret is empty — set it in repo Settings → Secrets"
+            echo "::error::MACOS_CERTIFICATE secret is empty"
             exit 1
           fi
-          # Quick sanity check: decode and verify it's a valid PKCS12
           echo -n "$MACOS_CERTIFICATE" | base64 --decode > /tmp/test_cert.p12
-          FILESIZE=$(stat -f%z /tmp/test_cert.p12 2>/dev/null || stat -c%s /tmp/test_cert.p12)
-          echo "Certificate file size: $FILESIZE bytes"
+          FILESIZE=$(stat -f%z /tmp/test_cert.p12)
+          rm -f /tmp/test_cert.p12
           if [ "$FILESIZE" -lt 100 ]; then
-            echo "::error::MACOS_CERTIFICATE decoded to only $FILESIZE bytes — likely corrupted or truncated"
+            echo "::error::MACOS_CERTIFICATE is only $FILESIZE bytes — likely corrupted"
             exit 1
           fi
-          rm -f /tmp/test_cert.p12
-          echo "Certificate secret looks valid ($FILESIZE bytes)"
+          echo "Certificate OK ($FILESIZE bytes)"
         env:
           MACOS_CERTIFICATE: ${{ secrets.MACOS_CERTIFICATE }}
 
-      - name: Build and package Electron app
+      - name: Build and package Electron app (signing only, no notarize)
         env:
           CSC_LINK: ${{ secrets.MACOS_CERTIFICATE }}
           CSC_KEY_PASSWORD: ${{ secrets.MACOS_CERTIFICATE_PWD }}
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          # Tell electron-builder to build only, not publish — we use softprops/action-gh-release instead
-          PUBLISH: never
         run: cd packages/launcher && npm run build && npx electron-builder --publish never
+
+      - name: Notarize with xcrun notarytool
+        run: |
+          # Find the zip to notarize (Apple requires zip or dmg)
+          ZIP_FILE=$(ls packages/launcher/release/*.zip | head -1)
+          echo "Notarizing: $ZIP_FILE"
+
+          xcrun notarytool submit "$ZIP_FILE" \
+            --apple-id "$APPLE_ID" \
+            --password "$APPLE_APP_SPECIFIC_PASSWORD" \
+            --team-id "XF99392HXQ" \
+            --wait --timeout 10m
+
+          echo "Notarization complete"
+
+          # Staple the DMG (stapling a zip isn't supported, but the DMG can be stapled)
+          DMG_FILE=$(ls packages/launcher/release/*.dmg | head -1)
+          if [ -n "$DMG_FILE" ]; then
+            # Re-notarize the DMG too
+            xcrun notarytool submit "$DMG_FILE" \
+              --apple-id "$APPLE_ID" \
+              --password "$APPLE_APP_SPECIFIC_PASSWORD" \
+              --team-id "XF99392HXQ" \
+              --wait --timeout 10m
+            xcrun stapler staple "$DMG_FILE"
+            echo "DMG stapled"
+          fi
+        env:
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
 
       - name: Extract version from tag
         id: version
