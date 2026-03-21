@@ -30,12 +30,12 @@ export function App() {
           {connected ? 'Connected' : 'Disconnected'}
         </span>
       </header>
+      <VideoIdBar send={send} />
       <main style={{ flex: 1, overflow: 'auto' }}>
         <PluginManager />
         <PresetVaultPanel onMessage={onMessage} />
         <AgentPanel onMessage={onMessage} send={send} />
       </main>
-      <VideoIdBar send={send} />
       <CutFeedbackWidget onMessage={onMessage} send={send} />
     </div>
   );

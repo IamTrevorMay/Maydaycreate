@@ -15,46 +15,21 @@
       "name": "Stop Capture",
       "description": "Stop polling and show session stats"
     },
-    {
-      "id": "stats",
-      "name": "Stats",
-      "description": "Show edit statistics for the current session"
-    },
-    {
-      "id": "export-training",
-      "name": "Export Training",
-      "description": "Export quality-weighted training examples as JSONL"
-    },
-    {
-      "id": "export-data",
-      "name": "Export Data",
-      "description": "Export all cut records as JSON"
-    },
-    {
+{
       "id": "train-model",
       "name": "Train Model",
-      "description": "Train the local autocut neural network from collected edit data"
+      "description": "Retrain the autocut model from collected edit data"
     },
     {
-      "id": "start-autocut",
-      "name": "Start Autocut",
-      "description": "Load the trained model and begin real-time edit suggestions"
+      "id": "scan-autocut",
+      "name": "Scan Autocut",
+      "description": "Scan all clips and return planned edits for confirmation"
     },
     {
-      "id": "stop-autocut",
-      "name": "Stop Autocut",
-      "description": "Stop autocut suggestions"
-    },
-    {
-      "id": "autocut-status",
-      "name": "Autocut Status",
-      "description": "Show model stats, accuracy, and current autocut state"
-    },
-    {
-      "id": "accept-suggestion",
-      "name": "Accept Suggestion",
-      "description": "Execute the current autocut suggestion on the timeline"
+      "id": "execute-autocut",
+      "name": "Execute Autocut",
+      "description": "Duplicate sequence and execute all planned edits"
     }
   ],
-  "permissions": ["timeline"]
+  "permissions": ["timeline", "media"]
 }

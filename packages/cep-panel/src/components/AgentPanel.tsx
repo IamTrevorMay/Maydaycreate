@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import type { BridgeMessage } from '@mayday/types';
 
 interface ProposalView {
@@ -39,17 +39,18 @@ export function AgentPanel({ onMessage, send }: AgentPanelProps) {
   const [expandedId, setExpandedId] = useState<number | null>(null);
   const [instruction, setInstruction] = useState('');
   const [stats, setStats] = useState<{ cycleCount: number; lastAnalysis: string } | null>(null);
+  const rawEditsRef = useRef<Array<Record<string, unknown>>>([]);
 
   // Subscribe to proposals updates
   useEffect(() => {
-    const unsub1 = onMessage('plugin:edit-agent:proposals', (payload) => {
+    const unsub1 = onMessage('plugin:cutting-board:proposals', (payload) => {
       setProposals(payload as ProposalView[]);
     });
-    const unsub2 = onMessage('plugin:edit-agent:proposal-update', (payload) => {
+    const unsub2 = onMessage('plugin:cutting-board:proposal-update', (payload) => {
       const update = payload as { id: number; status: string };
       setProposals(prev => prev.map(p => p.id === update.id ? { ...p, status: update.status } : p));
     });
-    const unsub3 = onMessage('plugin:edit-agent:mode-change', (payload) => {
+    const unsub3 = onMessage('plugin:cutting-board:mode-change', (payload) => {
       const { mode: newMode } = payload as { mode: string };
       setMode(newMode);
     });
@@ -58,7 +59,7 @@ export function AgentPanel({ onMessage, send }: AgentPanelProps) {
 
   const sendCommand = useCallback(async (command: string, args?: Record<string, unknown>) => {
     try {
-      const res = await fetch(`http://localhost:9876/api/plugins/edit-agent/command/${command}`, {
+      const res = await fetch(`http://localhost:9876/api/plugins/cutting-board/command/${command}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(args || {}),
@@ -72,38 +73,42 @@ export function AgentPanel({ onMessage, send }: AgentPanelProps) {
   }, []);
 
   const handleStartStop = useCallback(async () => {
-    const result = await sendCommand(running ? 'stop-agent' : 'start-agent');
+    const result = await sendCommand(running ? 'stop-autocut' : 'start-autocut');
     if (result?.success) setRunning(!running);
   }, [running, sendCommand]);
 
   const handleAnalyze = useCallback(async () => {
-    const result = await sendCommand('analyze', instruction ? { instruction } : undefined);
-    if (result?.success && Array.isArray(result.result)) {
-      setProposals(result.result);
+    const result = await sendCommand('scan-autocut');
+    if (result?.success && result.result?.edits) {
+      const edits = result.result.edits as Array<{
+        editType: string; confidence: number; clipName: string;
+        clipStart: number; trackIndex: number; trackType: string; clipIndex: number;
+        parameters: Record<string, unknown>;
+      }>;
+      setProposals(edits.map((e, i) => ({
+        id: i,
+        editType: e.editType,
+        description: `${e.clipName} @ track ${e.trackIndex + 1}`,
+        confidence: e.confidence,
+        reasoning: `Parameters: ${JSON.stringify(e.parameters)}`,
+        status: 'pending',
+      })));
+      // Store raw edits for execute
+      rawEditsRef.current = edits;
     }
-  }, [sendCommand, instruction]);
+  }, [sendCommand]);
 
   const handleAccept = useCallback(async (proposalId: number) => {
-    send({
-      id: crypto.randomUUID(),
-      type: 'plugin:edit-agent:accept',
-      payload: { proposalId },
-      timestamp: Date.now(),
-    });
-    // Optimistic update
-    setProposals(prev => prev.map(p => p.id === proposalId ? { ...p, status: 'executed' } : p));
-  }, [send]);
+    const edit = rawEditsRef.current[proposalId];
+    if (!edit) return;
+    const result = await sendCommand('execute-autocut', { edits: [edit] });
+    setProposals(prev => prev.map(p => p.id === proposalId
+      ? { ...p, status: result?.success ? 'executed' : 'failed' } : p));
+  }, [sendCommand]);
 
   const handleReject = useCallback(async (proposalId: number) => {
-    send({
-      id: crypto.randomUUID(),
-      type: 'plugin:edit-agent:reject',
-      payload: { proposalId },
-      timestamp: Date.now(),
-    });
-    // Optimistic update
     setProposals(prev => prev.map(p => p.id === proposalId ? { ...p, status: 'rejected' } : p));
-  }, [send]);
+  }, []);
 
   const handleModeChange = useCallback(async (e: React.ChangeEvent<HTMLSelectElement>) => {
     const newMode = e.target.value;
@@ -355,7 +360,17 @@ export function AgentPanel({ onMessage, send }: AgentPanelProps) {
           {pendingCount > 0 && (
             <div style={{ display: 'flex', gap: 4 }}>
               <button
-                onClick={() => sendCommand('accept-all')}
+                onClick={async () => {
+                  const pendingEdits = proposals
+                    .filter(p => p.status === 'pending')
+                    .map(p => rawEditsRef.current[p.id])
+                    .filter(Boolean);
+                  if (pendingEdits.length === 0) return;
+                  const result = await sendCommand('execute-autocut', { edits: pendingEdits });
+                  if (result?.success) {
+                    setProposals(prev => prev.map(p => p.status === 'pending' ? { ...p, status: 'executed' } : p));
+                  }
+                }}
                 style={{
                   background: '#14532d',
                   border: '1px solid #22c55e',
@@ -369,7 +384,7 @@ export function AgentPanel({ onMessage, send }: AgentPanelProps) {
                 Accept All
               </button>
               <button
-                onClick={() => sendCommand('reject-all')}
+                onClick={() => setProposals(prev => prev.map(p => p.status === 'pending' ? { ...p, status: 'rejected' } : p))}
                 style={{
                   background: '#450a0a',
                   border: '1px solid #dc2626',

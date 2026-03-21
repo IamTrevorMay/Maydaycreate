@@ -105,6 +105,41 @@ export class MediaService {
     }
   }
 
+  /**
+   * Get RMS audio levels at regular intervals across the file.
+   * Returns an array of { time, rms } where rms is 0-1 normalized.
+   */
+  async getAudioLevels(filePath: string, intervalSeconds = 0.5): Promise<Array<{ time: number; rms: number }>> {
+    try {
+      // Use ffmpeg's astats filter to compute RMS levels per segment
+      const { stderr } = await execFileAsync('ffmpeg', [
+        '-i', filePath,
+        '-af', `asegment=segment_time=${intervalSeconds},astats=metadata=1:reset=1`,
+        '-f', 'null', '-',
+      ], { maxBuffer: 50 * 1024 * 1024 });
+
+      const levels: Array<{ time: number; rms: number }> = [];
+      const lines = stderr.split('\n');
+      let currentTime = 0;
+
+      for (const line of lines) {
+        // Parse "lavfi.astats.Overall.RMS_level" from metadata
+        const rmsMatch = line.match(/RMS_level=([-\d.]+)/);
+        if (rmsMatch) {
+          const rmsDb = parseFloat(rmsMatch[1]);
+          // Convert dB to 0-1 scale: -60dB → 0, 0dB → 1
+          const rmsNorm = Math.max(0, Math.min(1, (rmsDb + 60) / 60));
+          levels.push({ time: currentTime, rms: rmsNorm });
+          currentTime += intervalSeconds;
+        }
+      }
+
+      return levels;
+    } catch {
+      return [];
+    }
+  }
+
   async getWaveform(filePath: string, options?: { samples?: number; channel?: number }): Promise<number[]> {
     const samples = options?.samples ?? 1000;
     const channel = options?.channel ?? 0;

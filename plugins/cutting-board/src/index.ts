@@ -229,6 +229,25 @@ async function pollTimeline(ctx: PluginContext) {
 
         editCount++;
 
+        // Compute audio features asynchronously and update the record
+        (async () => {
+          try {
+            const silenceRegions = await ctx.services.media.detectSilence(change.mediaPath, { threshold: -37, minDuration: 0.2 });
+            const audioLevels = await ctx.services.media.getAudioLevels(change.mediaPath, 0.5);
+
+            const editMediaTime = change.editPointTime; // time within the media
+            const isOnSilence = silenceRegions.some(r => editMediaTime >= r.start && editMediaTime <= r.end);
+            const levelIdx = Math.min(Math.floor(editMediaTime / 0.5), audioLevels.length - 1);
+            const audioLevel = audioLevels[Math.max(0, levelIdx)]?.rms ?? 0.5;
+            const prevLevel = levelIdx > 0 ? (audioLevels[levelIdx - 1]?.rms ?? audioLevel) : audioLevel;
+            const audioLevelDelta = audioLevel - prevLevel;
+
+            db!.updateAudioFeatures(recordId, audioLevel, audioLevelDelta, isOnSilence);
+          } catch {
+            // Audio analysis is best-effort — don't fail the edit recording
+          }
+        })();
+
         ctx.log.info(`Edit detected: ${change.editType} on "${change.clipName}" at ${change.editPointTime.toFixed(2)}s${isUndo ? ' (undo)' : ''}`);
 
         // Push notification to panel (auto-rated, no manual input needed)
@@ -790,7 +809,7 @@ export default definePlugin({
             const trimAmount = suggestion.parameters.trimAmount ?? clip.duration * 0.1;
             success = await (timeline as any).setClipInOutPoints(
               suggestion.targetClip.trackIndex, suggestion.targetClip.clipIndex,
-              clip.inPoint + trimAmount, clip.outPoint,
+              suggestion.targetClip.trackType, clip.inPoint + trimAmount, clip.outPoint,
             );
             break;
           }
@@ -798,7 +817,7 @@ export default definePlugin({
             const trimAmount = suggestion.parameters.trimAmount ?? clip.duration * 0.1;
             success = await (timeline as any).setClipInOutPoints(
               suggestion.targetClip.trackIndex, suggestion.targetClip.clipIndex,
-              clip.inPoint, clip.outPoint - trimAmount,
+              suggestion.targetClip.trackType, clip.inPoint, clip.outPoint - trimAmount,
             );
             break;
           }
@@ -856,28 +875,28 @@ export default definePlugin({
         return null;
       }
 
-      // Gather all clips across all video tracks
-      const allClips: Array<{
-        trackIndex: number;
-        trackType: 'video' | 'audio';
-        clipIndex: number;
-        clip: { name: string; start: number; end: number; duration: number; trackIndex: number; trackType: string };
-      }> = [];
-
-      for (const track of seq.videoTracks) {
-        for (let i = 0; i < track.clips.length; i++) {
-          const clip = track.clips[i];
-          allClips.push({
-            trackIndex: track.index,
-            trackType: 'video',
-            clipIndex: i,
-            clip: { name: clip.name, start: clip.start, end: clip.end, duration: clip.duration, trackIndex: track.index, trackType: 'video' },
+      // Seed recent edits from DB so context features match training conditions
+      const recentEdits: Array<{ editType: string; timestamp: number; quality: string }> = [];
+      if (db) {
+        const recent = db.getRecentRecords(10) as Array<{ edit_type: string; detected_at: number; rating: number | null }>;
+        for (const r of recent.reverse()) {
+          recentEdits.push({
+            editType: r.edit_type,
+            timestamp: r.detected_at,
+            quality: r.rating === 0 ? 'bad' : 'good',
           });
         }
       }
 
-      // Run inference on every clip (using midpoint as playhead position)
-      const recentEdits: Array<{ editType: string; timestamp: number; quality: string }> = [];
+      // Scan parameters (tuned from AutoCut reference + user training)
+      const SCAN_STEP = 0.5;           // sample every 0.5s for finer granularity
+      const SILENCE_THRESHOLD = -37;   // dB — more sensitive than default -30
+      const MIN_SILENCE = 0.2;         // minimum silence duration to consider (seconds)
+      const MIN_TALK = 0.2;            // minimum speech duration to keep
+      const MARGIN_BEFORE = 0.2;       // pad before cut (keep breath before speech)
+      const MARGIN_AFTER = 0.2;        // pad after cut (keep word endings)
+      const MIN_TIME_BETWEEN_CUTS = 1.0; // prevent machine-gun cuts
+
       const planned: Array<{
         editType: string;
         confidence: number;
@@ -889,42 +908,181 @@ export default definePlugin({
         clipIndex: number;
       }> = [];
 
-      for (const entry of allClips) {
-        const c = entry.clip;
-        const neighborBefore = entry.clipIndex > 0 ? seq.videoTracks[entry.trackIndex]?.clips[entry.clipIndex - 1] ?? null : null;
-        const neighborAfter = entry.clipIndex < (seq.videoTracks[entry.trackIndex]?.clips.length ?? 0) - 1
-          ? seq.videoTracks[entry.trackIndex]?.clips[entry.clipIndex + 1] ?? null : null;
+      // Only scan video track 0 — cuts apply to both video and linked audio
+      const vTrack = seq.videoTracks[0];
+      if (!vTrack) {
+        ctx.ui.showToast('No video tracks', 'warning');
+        return null;
+      }
 
-        const playhead = c.start + c.duration * 0.5;
-        const input = buildInferenceInput(
-          c as any, playhead, recentEdits,
-          neighborBefore as any, neighborAfter as any,
-        );
+      for (let ci = 0; ci < vTrack.clips.length; ci++) {
+        const clip = vTrack.clips[ci];
+        const clipDur = clip.duration;
+        if (clipDur < MIN_TALK * 2) continue;
 
-        const suggestion = runInference(input, classifier, regressors, {
-          trackIndex: entry.trackIndex,
-          trackType: entry.trackType,
-          clipIndex: entry.clipIndex,
-          name: c.name,
-          start: c.start,
-          end: c.end,
-          duration: c.duration,
-        }, autocutThreshold);
+        // Precompute audio analysis for this clip
+        ctx.ui.showToast(`Analyzing audio for "${clip.name}"...`, 'info');
+        let audioLevels: Array<{ time: number; rms: number }> = [];
+        let silenceRegions: Array<{ start: number; end: number; duration: number }> = [];
+        try {
+          const mediaPath = (clip as any).mediaPath || clip.name;
+          [audioLevels, silenceRegions] = await Promise.all([
+            ctx.services.media.getAudioLevels(mediaPath, SCAN_STEP),
+            ctx.services.media.detectSilence(mediaPath, { threshold: SILENCE_THRESHOLD, minDuration: MIN_SILENCE }),
+          ]);
+          ctx.log.info(`[Scan] Audio: ${audioLevels.length} level samples, ${silenceRegions.length} silence regions`);
+        } catch (err) {
+          ctx.log.warn(`[Scan] Audio analysis failed, using defaults:`, err);
+        }
 
-        if (suggestion) {
-          planned.push({
-            editType: suggestion.editType,
-            confidence: suggestion.confidence,
-            parameters: suggestion.parameters,
-            clipName: c.name,
-            clipStart: c.start,
-            trackIndex: entry.trackIndex,
-            trackType: entry.trackType,
-            clipIndex: entry.clipIndex,
-          });
+        // Helper: get audio level at a given media-relative time
+        const getAudioAt = (time: number): number => {
+          if (audioLevels.length === 0) return 0.5;
+          const idx = Math.min(Math.floor(time / SCAN_STEP), audioLevels.length - 1);
+          return audioLevels[Math.max(0, idx)]?.rms ?? 0.5;
+        };
 
-          // Feed back into recent edits for context
-          recentEdits.push({ editType: suggestion.editType, timestamp: Date.now(), quality: 'good' });
+        // --- Hybrid approach: silence-driven candidates + model scoring ---
+        //
+        // Step 1: Find cut candidates at silence boundaries.
+        //   Each silence region boundary (end of silence = start of speech)
+        //   is a natural cut point. Apply margins so we don't clip breaths.
+        //
+        // Step 2: Run the trained model on each candidate to score it.
+        //   The model can reject cuts based on learned editing style.
+
+        // Filter silence regions: skip tiny talk gaps between silences
+        const validSilences = silenceRegions.filter(r => r.duration >= MIN_SILENCE);
+        ctx.log.info(`[Scan] ${validSilences.length} silence regions (≥${MIN_SILENCE}s) from ${silenceRegions.length} total`);
+
+        // Build candidate cut points at silence boundaries
+        interface CutCandidate { time: number; mediaTime: number; type: 'silence-start' | 'silence-end'; silenceDuration: number }
+        const candidates: CutCandidate[] = [];
+
+        for (let si = 0; si < validSilences.length; si++) {
+          const s = validSilences[si];
+          const prevSilence = si > 0 ? validSilences[si - 1] : null;
+
+          // Cut at start of silence (end of speech) — apply margin after
+          const cutAtSilenceStart = s.start + MARGIN_AFTER;
+          // Cut at end of silence (start of speech) — apply margin before
+          const cutAtSilenceEnd = s.end - MARGIN_BEFORE;
+
+          // Check min-talk: if the gap between this silence and the previous
+          // is too short, skip (the speech segment is too brief)
+          const talkBefore = prevSilence ? s.start - prevSilence.end : s.start;
+
+          if (talkBefore >= MIN_TALK && cutAtSilenceStart > 0 && cutAtSilenceStart < clipDur) {
+            candidates.push({
+              time: clip.start + cutAtSilenceStart,
+              mediaTime: cutAtSilenceStart,
+              type: 'silence-start',
+              silenceDuration: s.duration,
+            });
+          }
+
+          if (cutAtSilenceEnd > 0 && cutAtSilenceEnd < clipDur && cutAtSilenceEnd > cutAtSilenceStart + MIN_TALK) {
+            candidates.push({
+              time: clip.start + cutAtSilenceEnd,
+              mediaTime: cutAtSilenceEnd,
+              type: 'silence-end',
+              silenceDuration: s.duration,
+            });
+          }
+        }
+
+        ctx.log.info(`[Scan] ${candidates.length} cut candidates from silence boundaries`);
+
+        // Score each candidate with the model and enforce min time between cuts
+        let lastCutTime = clip.start;
+
+        for (const cand of candidates) {
+          // Enforce minimum time between cuts
+          if (cand.time - lastCutTime < MIN_TIME_BETWEEN_CUTS) continue;
+          // Don't cut too close to clip boundaries
+          if (cand.time - clip.start < MARGIN_BEFORE || clip.end - cand.time < MARGIN_AFTER) continue;
+
+          const level = getAudioAt(cand.mediaTime);
+          const prevLevel = getAudioAt(cand.mediaTime - SCAN_STEP);
+          const audioFeatures = {
+            audioLevel: level,
+            audioLevelDelta: level - prevLevel,
+            isOnSilence: true, // by definition — we're cutting at silence boundaries
+          };
+
+          const segmentDuration = clip.end - lastCutTime;
+          const ratioInSegment = (cand.time - lastCutTime) / segmentDuration;
+
+          const input = buildInferenceInput(
+            {
+              ...clip,
+              start: lastCutTime,
+              duration: segmentDuration,
+              trackType: 'video',
+              trackIndex: vTrack.index,
+            } as any,
+            cand.time,
+            recentEdits,
+            null, null,
+            audioFeatures,
+          );
+          input[3] = Math.min(cand.time / 600, 1);
+          input[4] = ratioInSegment;
+
+          const classifierOutput = classifier.run(input) as Record<string, number>;
+          const cutConf = classifierOutput['cut'] ?? 0;
+          const deleteConf = classifierOutput['delete'] ?? 0;
+
+          // Accept if model agrees this is a cut point, OR if it's a long silence
+          // (the model may not have enough audio training data yet, so trust long silences)
+          const isLongSilence = cand.silenceDuration >= 0.8;
+          const modelAgrees = cutConf >= autocutThreshold;
+          const shouldCut = modelAgrees || isLongSilence;
+
+          if (shouldCut) {
+            const confidence = modelAgrees ? cutConf : Math.min(0.5 + cand.silenceDuration * 0.2, 0.9);
+            planned.push({
+              editType: 'cut',
+              confidence,
+              parameters: { splitTime: cand.time },
+              clipName: clip.name,
+              clipStart: clip.start,
+              trackIndex: vTrack.index,
+              trackType: 'video',
+              clipIndex: ci,
+            });
+            lastCutTime = cand.time;
+            ctx.log.debug(`[Scan] CUT @ ${cand.time.toFixed(1)}s (${cand.type}) silence=${cand.silenceDuration.toFixed(1)}s audio=${level.toFixed(2)} conf=${(confidence * 100).toFixed(0)}%${modelAgrees ? '' : ' (silence-fallback)'}`);
+          }
+        }
+
+        // Trim head if clip starts with silence
+        if (validSilences.length > 0 && validSilences[0].start < 0.1) {
+          const trimAmount = Math.min(validSilences[0].end - MARGIN_BEFORE, clipDur * 0.5);
+          if (trimAmount > MIN_SILENCE) {
+            planned.push({
+              editType: 'trim-head', confidence: 0.8,
+              parameters: { trimAmount }, clipName: clip.name, clipStart: clip.start,
+              trackIndex: vTrack.index, trackType: 'video', clipIndex: ci,
+            });
+            ctx.log.debug(`[Scan] TRIM-HEAD "${clip.name}" by ${trimAmount.toFixed(1)}s (leading silence)`);
+          }
+        }
+
+        // Trim tail if clip ends with silence
+        if (validSilences.length > 0) {
+          const lastSilence = validSilences[validSilences.length - 1];
+          if (lastSilence.end >= clipDur - 0.1) {
+            const trimAmount = Math.min(clipDur - lastSilence.start - MARGIN_AFTER, clipDur * 0.5);
+            if (trimAmount > MIN_SILENCE) {
+              planned.push({
+                editType: 'trim-tail', confidence: 0.8,
+                parameters: { trimAmount }, clipName: clip.name, clipStart: clip.start,
+                trackIndex: vTrack.index, trackType: 'video', clipIndex: ci,
+              });
+              ctx.log.debug(`[Scan] TRIM-TAIL "${clip.name}" by ${trimAmount.toFixed(1)}s (trailing silence)`);
+            }
+          }
         }
       }
 
@@ -932,11 +1090,12 @@ export default definePlugin({
         ? planned.reduce((s, p) => s + p.confidence, 0) / planned.length
         : 0;
 
-      ctx.log.info(`[Autocut] Scanned ${allClips.length} clips, planned ${planned.length} edits (avg confidence: ${(avgConfidence * 100).toFixed(1)}%)`);
+      const totalClips = vTrack.clips.length;
+      ctx.log.info(`[Autocut] Scanned ${totalClips} clips, planned ${planned.length} edits (avg confidence: ${(avgConfidence * 100).toFixed(1)}%)`);
 
       return {
         sequenceName: seq.name,
-        totalClips: allClips.length,
+        totalClips,
         plannedEdits: planned.length,
         avgConfidence,
         edits: planned,
@@ -946,7 +1105,6 @@ export default definePlugin({
     },
 
     'execute-autocut': async (ctx, args) => {
-      // Phase 2: Duplicate sequence, then execute all planned edits in reverse order
       const { edits } = args as { edits: Array<{
         editType: string;
         confidence: number;
@@ -974,23 +1132,68 @@ export default definePlugin({
       }
       ctx.log.info(`[Autocut] Backup created: "${backup.backupName}"`);
 
-      // Step 2: Execute edits in reverse order (highest clipStart first)
-      // This prevents earlier edits from shifting clip indices of later ones
-      const sorted = [...edits].sort((a, b) => b.clipStart - a.clipStart);
+      // Step 2: Sort cuts by splitTime ascending — execute from left to right.
+      // Each cut splits a clip, and subsequent cuts need to find the right clip
+      // by checking which clip contains the target splitTime.
+      // Trims are done after all cuts.
+      const cuts = edits.filter(e => e.editType === 'cut').sort((a, b) =>
+        ((a.parameters.splitTime as number) ?? 0) - ((b.parameters.splitTime as number) ?? 0)
+      );
+      const trims = edits.filter(e => e.editType !== 'cut');
 
       let executed = 0;
       let failed = 0;
 
-      for (const edit of sorted) {
-        // Re-fetch sequence to get fresh clip indices after each edit
+      // Execute cuts — find the clip that contains the splitTime
+      for (const edit of cuts) {
+        const splitTime = edit.parameters.splitTime as number;
+        if (splitTime == null) { failed++; continue; }
+
         const seq = await timeline.getActiveSequence();
         if (!seq) { failed++; continue; }
 
-        // Find the clip by matching start time (indices may have shifted)
-        const tracks = seq.videoTracks;
+        const track = seq.videoTracks.find(t => t.index === edit.trackIndex);
+        if (!track) { failed++; continue; }
+
+        // Find the clip that contains this split time
+        let clipIndex = -1;
+        for (let i = 0; i < track.clips.length; i++) {
+          const c = track.clips[i];
+          if (splitTime > c.start + 0.01 && splitTime < c.end - 0.01) {
+            clipIndex = i;
+            break;
+          }
+        }
+        if (clipIndex < 0) {
+          ctx.log.warn(`[Autocut] No clip contains splitTime ${splitTime.toFixed(2)}s — skipping`);
+          failed++;
+          continue;
+        }
+
+        try {
+          const success = await timeline.splitClip(edit.trackIndex, clipIndex, 'video', splitTime);
+          if (success) {
+            executed++;
+            ctx.log.debug(`[Autocut] Cut at ${splitTime.toFixed(2)}s`);
+          } else {
+            failed++;
+          }
+        } catch (err) {
+          ctx.log.error(`[Autocut] Failed to cut at ${splitTime.toFixed(2)}s:`, err);
+          failed++;
+        }
+      }
+
+      // Execute trims (trim-head, trim-tail, delete) — use original approach
+      for (const edit of trims) {
+        const seq = await timeline.getActiveSequence();
+        if (!seq) { failed++; continue; }
+
+        const tracks = edit.trackType === 'video' ? seq.videoTracks : seq.audioTracks;
         const track = tracks.find(t => t.index === edit.trackIndex);
         if (!track) { failed++; continue; }
 
+        // Find clip by matching start time
         let clipIndex = -1;
         for (let i = 0; i < track.clips.length; i++) {
           if (Math.abs(track.clips[i].start - edit.clipStart) < 0.01) {
@@ -1005,27 +1208,21 @@ export default definePlugin({
 
         try {
           switch (edit.editType) {
-            case 'cut': {
-              const splitRatio = (edit.parameters.splitRatio as number) ?? 0.5;
-              const splitTime = clip.start + splitRatio * clip.duration;
-              success = await timeline.splitClip(edit.trackIndex, clipIndex, 'video', splitTime);
-              break;
-            }
             case 'trim-head': {
               const trimAmount = (edit.parameters.trimAmount as number) ?? clip.duration * 0.1;
-              success = await (timeline as any).setClipInOutPoints(edit.trackIndex, clipIndex, 'video', clip.inPoint + trimAmount, clip.outPoint);
+              success = await (timeline as any).setClipInOutPoints(edit.trackIndex, clipIndex, edit.trackType, clip.inPoint + trimAmount, clip.outPoint);
               break;
             }
             case 'trim-tail': {
               const trimAmount = (edit.parameters.trimAmount as number) ?? clip.duration * 0.1;
-              success = await (timeline as any).setClipInOutPoints(edit.trackIndex, clipIndex, 'video', clip.inPoint, clip.outPoint - trimAmount);
+              success = await (timeline as any).setClipInOutPoints(edit.trackIndex, clipIndex, edit.trackType, clip.inPoint, clip.outPoint - trimAmount);
               break;
             }
             case 'delete': {
               if (edit.parameters.ripple) {
-                success = await timeline.rippleDelete(edit.trackIndex, clipIndex, 'video');
+                success = await timeline.rippleDelete(edit.trackIndex, clipIndex, edit.trackType as 'video' | 'audio');
               } else {
-                success = await timeline.liftClip(edit.trackIndex, clipIndex, 'video');
+                success = await timeline.liftClip(edit.trackIndex, clipIndex, edit.trackType as 'video' | 'audio');
               }
               break;
             }
@@ -1039,11 +1236,7 @@ export default definePlugin({
           continue;
         }
 
-        if (success) {
-          executed++;
-        } else {
-          failed++;
-        }
+        if (success) { executed++; } else { failed++; }
       }
 
       const msg = `Autocut complete: ${executed} edits applied${failed > 0 ? `, ${failed} failed` : ''}. Backup: "${backup.backupName}"`;

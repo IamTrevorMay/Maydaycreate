@@ -101,6 +101,7 @@ export interface MediaServiceAPI {
   getMetadata(filePath: string): Promise<import('./media').MediaMetadata>;
   detectSilence(filePath: string, options?: SilenceDetectionOptions): Promise<import('./media').SilentRegion[]>;
   getWaveform(filePath: string, options?: WaveformOptions): Promise<number[]>;
+  getAudioLevels(filePath: string, intervalSeconds?: number): Promise<Array<{ time: number; rms: number }>>;
 }
 
 export interface SilenceDetectionOptions {

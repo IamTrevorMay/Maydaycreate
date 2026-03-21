@@ -2,6 +2,7 @@ import brain from 'brain.js';
 import { EDIT_TYPES } from './autocut-types.js';
 import type { SerializedModel } from './autocut-types.js';
 import type { TrainingExample } from './pipeline.js';
+import { INTENT_TAGS } from '@mayday/types';
 import fs from 'fs';
 import path from 'path';
 
@@ -42,12 +43,26 @@ export function featureToVector(example: TrainingExample, recentEdits: TrainingE
   const ratedEdits = last10.filter(e => e.quality !== 'bad');
   const recentApprovalRate = last10.length > 0 ? ratedEdits.length / last10.length : 0.5;
 
+  // Audio features (new)
+  const audioLevel = example.audioLevel ?? 0.5;
+  const audioLevelDelta = Math.max(-1, Math.min(1, example.audioLevelDelta ?? 0));
+  const isOnSilence = example.isOnSilence ? 1 : 0;
+
+  // Intent tags as one-hot encoding (new)
+  const tagFeatures = INTENT_TAGS.map(tag =>
+    example.tags?.includes(tag.id) ? 1 : 0
+  );
+
   return [
     trackType, trackIndex, clipDuration, clipPosition,
     playheadInClip, timeSinceLastEdit,
     hasNeighborBefore, hasNeighborAfter, gapBefore, gapAfter,
     recentCutFrac, recentTrimHeadFrac, recentTrimTailFrac, recentDeleteFrac,
     recentApprovalRate,
+    // Audio features [15-17]
+    audioLevel, audioLevelDelta, isOnSilence,
+    // Intent tags [18-24]
+    ...tagFeatures,
   ];
 }
 

@@ -15,6 +15,8 @@ export function PluginManager() {
   const [plugins, setPlugins] = useState<PluginInfo[]>([]);
   const [loading, setLoading] = useState(true);
   const [toast, setToast] = useState<string | null>(null);
+  const [pendingEdits, setPendingEdits] = useState<Array<Record<string, unknown>> | null>(null);
+  const [scanSummary, setScanSummary] = useState<string | null>(null);
 
   const fetchPlugins = async () => {
     try {
@@ -46,14 +48,33 @@ export function PluginManager() {
 
   const runCommand = async (pluginId: string, commandId: string) => {
     try {
+      // execute-autocut needs the edits from a prior scan
+      let body = '{}';
+      if (commandId === 'execute-autocut' && pendingEdits) {
+        body = JSON.stringify({ edits: pendingEdits });
+      }
+
       const res = await fetch(`http://localhost:9876/api/plugins/${pluginId}/command/${commandId}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: '{}',
+        body,
       });
       const data = await res.json();
       if (data.success) {
-        setToast(`Command result: ${JSON.stringify(data.result)}`);
+        // Handle scan-autocut result specially
+        if (commandId === 'scan-autocut' && data.result?.edits) {
+          const r = data.result;
+          setPendingEdits(r.edits);
+          setScanSummary(`${r.plannedEdits} edits planned across ${r.totalClips} clips (avg confidence: ${(r.avgConfidence * 100).toFixed(0)}%)`);
+          setToast(`Scan complete — ${r.plannedEdits} edits found. Click "Execute Autocut" to apply.`);
+        } else if (commandId === 'execute-autocut') {
+          const r = data.result;
+          setPendingEdits(null);
+          setScanSummary(null);
+          setToast(`Autocut done — ${r?.executed ?? 0} edits applied (backup: ${r?.backupName ?? 'created'})`);
+        } else {
+          setToast(`${commandId}: ${JSON.stringify(data.result)}`);
+        }
       } else {
         setToast(`Error: ${data.error}`);
       }
@@ -113,6 +134,14 @@ export function PluginManager() {
             <div style={{ color: '#999', fontSize: 10, marginTop: 4 }}>
               {plugin.manifest.description}
             </div>
+            {plugin.manifest.id === 'cutting-board' && scanSummary && (
+              <div style={{
+                marginTop: 6, padding: '6px 8px', background: '#1b4332',
+                borderRadius: 3, color: '#4ade80', fontSize: 10,
+              }}>
+                {scanSummary}
+              </div>
+            )}
             {plugin.manifest.commands && plugin.status === 'activated' && (
               <div style={{ marginTop: 6, display: 'flex', gap: 4, flexWrap: 'wrap' }}>
                 {plugin.manifest.commands.map((cmd) => (

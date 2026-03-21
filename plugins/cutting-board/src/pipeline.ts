@@ -28,9 +28,13 @@ export interface TrainingExample {
   context: EditContext;
   action: EditAction;
   timestamp: number;
+  tags: string[];
+  audioLevel: number;       // RMS level at edit point (0-1)
+  audioLevelDelta: number;  // change in level around edit point (-1 to 1)
+  isOnSilence: boolean;     // true if edit point is within a silent region
 }
 
-export function extractFeatures(record: CutRecord & { quality: string; weight: number }): TrainingExample {
+export function extractFeatures(record: CutRecord & { quality: string; weight: number; intent_tags?: string; audio_level?: number; audio_level_delta?: number; is_on_silence?: number }): TrainingExample {
   const before = safeParseState(record.beforeState);
   const after = safeParseState(record.afterState);
 
@@ -67,6 +71,10 @@ export function extractFeatures(record: CutRecord & { quality: string; weight: n
     splitRatio,
   };
 
+  // Parse tags from DB JSON column
+  let tags: string[] = [];
+  try { tags = record.intent_tags ? JSON.parse(record.intent_tags) : []; } catch { tags = []; }
+
   return {
     id: record.id!,
     editType: record.editType,
@@ -75,6 +83,10 @@ export function extractFeatures(record: CutRecord & { quality: string; weight: n
     context,
     action,
     timestamp: record.detectedAt,
+    tags,
+    audioLevel: record.audio_level ?? 0.5,
+    audioLevelDelta: record.audio_level_delta ?? 0,
+    isOnSilence: (record.is_on_silence ?? 0) === 1,
   };
 }
 

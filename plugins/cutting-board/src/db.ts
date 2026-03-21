@@ -85,6 +85,13 @@ export class CuttingBoardDB {
     if (!sessionCols.some(c => c.name === 'video_id')) {
       this.db.exec(`ALTER TABLE sessions ADD COLUMN video_id TEXT;`);
     }
+
+    // Migration: add audio feature columns to cut_records
+    if (!cols.some(c => c.name === 'audio_level')) {
+      this.db.exec(`ALTER TABLE cut_records ADD COLUMN audio_level REAL;`);
+      this.db.exec(`ALTER TABLE cut_records ADD COLUMN audio_level_delta REAL;`);
+      this.db.exec(`ALTER TABLE cut_records ADD COLUMN is_on_silence INTEGER DEFAULT 0;`);
+    }
   }
 
   createSession(sequenceId: string, sequenceName: string, videoId?: string): number {
@@ -97,6 +104,12 @@ export class CuttingBoardDB {
 
   updateSessionVideoId(sessionId: number, videoId: string): void {
     this.db.prepare('UPDATE sessions SET video_id = ? WHERE id = ?').run(videoId, sessionId);
+  }
+
+  updateAudioFeatures(recordId: number, audioLevel: number, audioLevelDelta: number, isOnSilence: boolean): void {
+    this.db.prepare(
+      'UPDATE cut_records SET audio_level = ?, audio_level_delta = ?, is_on_silence = ? WHERE id = ?'
+    ).run(audioLevel, audioLevelDelta, isOnSilence ? 1 : 0, recordId);
   }
 
   endSession(sessionId: number, totalEdits: number): void {
@@ -356,6 +369,7 @@ export class CuttingBoardDB {
         cr.rating, cr.voice_transcript AS voiceTranscript, cr.notes,
         cr.is_undo AS isUndo, cr.detected_at AS detectedAt,
         cr.feedback_at AS feedbackAt, cr.boosted,
+        cr.intent_tags, cr.audio_level, cr.audio_level_delta, cr.is_on_silence,
         s.sequence_name AS sequenceName
       FROM cut_records cr
       JOIN sessions s ON cr.session_id = s.id
@@ -375,6 +389,7 @@ export class CuttingBoardDB {
         cr.rating, cr.voice_transcript AS voiceTranscript, cr.notes,
         cr.is_undo AS isUndo, cr.detected_at AS detectedAt,
         cr.feedback_at AS feedbackAt, cr.boosted,
+        cr.intent_tags, cr.audio_level, cr.audio_level_delta, cr.is_on_silence,
         s.sequence_name AS sequenceName
       FROM cut_records cr
       JOIN sessions s ON cr.session_id = s.id
