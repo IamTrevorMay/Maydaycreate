@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import type { BridgeMessage } from '@mayday/types';
+import { INTENT_TAGS } from '@mayday/types';
 
 type MessageCallback = (payload: unknown) => void;
 
@@ -18,6 +19,7 @@ interface AggregateStats {
   boostedCount: number;
   undoRate: number;
   editsByType: Record<string, number>;
+  tagCounts: Record<string, number>;
   recentSessions: Array<{
     id: number;
     sequenceName: string;
@@ -36,6 +38,7 @@ interface CloudStats {
   boostedCount: number;
   undoRate: number;
   editsByType: Record<string, number>;
+  tagCounts: Record<string, number>;
   machineCount: number;
 }
 
@@ -210,7 +213,7 @@ export function TrainingDashboard({ connected, send, onMessage }: Props) {
           <StatCard label="Total Edits" value={activeStats?.totalEdits ?? '\u2014'} />
           <StatCard label="Approval" value={activeStats?.approvalRate != null ? `${(activeStats.approvalRate * 100).toFixed(0)}%` : '\u2014'} />
           <StatCard label="Sessions" value={activeStats?.totalSessions ?? '\u2014'} />
-          <StatCard label="Boosted" value={activeStats?.boostedCount ?? '\u2014'} />
+          <StatCard label="Tagged" value={activeStats?.tagCounts ? Object.values(activeStats.tagCounts).reduce((s: number, n: number) => s + n, 0) : '\u2014'} color="#a855f7" />
         </div>
 
         {/* Edit Type Breakdown */}
@@ -235,6 +238,37 @@ export function TrainingDashboard({ connected, send, onMessage }: Props) {
             );
           })}
         </div>
+
+        {/* Intent Tag Breakdown */}
+        {activeStats?.tagCounts && Object.keys(activeStats.tagCounts).length > 0 && (() => {
+          const maxTagCount = Math.max(1, ...Object.values(activeStats.tagCounts));
+          return (
+            <div style={{ marginBottom: 8 }}>
+              <div style={{ fontSize: 10, color: colors.text.secondary, marginBottom: 4 }}>Intent Tags</div>
+              {INTENT_TAGS
+                .filter(tag => (activeStats.tagCounts[tag.id] || 0) > 0)
+                .sort((a, b) => (activeStats.tagCounts[b.id] || 0) - (activeStats.tagCounts[a.id] || 0))
+                .map(tag => {
+                  const count = activeStats.tagCounts[tag.id] || 0;
+                  return (
+                    <div key={tag.id} style={{ display: 'flex', alignItems: 'center', marginBottom: 2 }}>
+                      <span style={{ fontSize: 10, width: 90, color: colors.text.secondary, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{tag.label}</span>
+                      <div style={{ flex: 1, height: 10, background: colors.bg.primary, borderRadius: 2, overflow: 'hidden' }}>
+                        <div style={{
+                          height: '100%',
+                          width: `${(count / maxTagCount) * 100}%`,
+                          background: '#a855f7',
+                          borderRadius: 2,
+                          transition: 'width 0.3s',
+                        }} />
+                      </div>
+                      <span style={{ fontSize: 10, width: 30, textAlign: 'right', color: colors.text.secondary }}>{count}</span>
+                    </div>
+                  );
+                })}
+            </div>
+          );
+        })()}
 
         {/* Approval Bar */}
         <div>
@@ -337,7 +371,7 @@ export function TrainingDashboard({ connected, send, onMessage }: Props) {
   );
 }
 
-function StatCard({ label, value }: { label: string; value: React.ReactNode }) {
+function StatCard({ label, value, color }: { label: string; value: React.ReactNode; color?: string }) {
   return (
     <div style={{
       background: colors.bg.elevated,
@@ -345,7 +379,7 @@ function StatCard({ label, value }: { label: string; value: React.ReactNode }) {
       padding: '6px 8px',
     }}>
       <div style={{ fontSize: 9, color: colors.text.secondary, marginBottom: 2 }}>{label}</div>
-      <div style={{ fontSize: 14, fontWeight: 600 }}>{value}</div>
+      <div style={{ fontSize: 14, fontWeight: 600, color: color || colors.text.primary }}>{value}</div>
     </div>
   );
 }

@@ -251,8 +251,144 @@ function getTrainingRuns(): CuttingBoardTrainingRun[] {
   }
 }
 
+const CUT_WATCHER_SYNC_INTERVAL_MS = 60_000;
+let _cutWatcherSyncTimer: ReturnType<typeof setInterval> | null = null;
+
+async function syncCutWatcherToSupabase(): Promise<void> {
+  const config = loadConfig();
+  if (!config.supabaseUrl || !config.supabaseAnonKey) return;
+
+  const serverBase = `http://localhost:${config.serverPort}/api/plugins/cutting-board/command`;
+
+  // 1. Fetch unsynced data from the plugin
+  let syncData: { sessions: Array<Record<string, unknown>>; records: Array<Record<string, unknown>> };
+  try {
+    const res = await fetch(`${serverBase}/sync-data`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+    });
+    if (!res.ok) return;
+    const json = await res.json();
+    syncData = json.success ? json.result : json;
+  } catch {
+    return; // Server not running
+  }
+
+  if ((!syncData.sessions || syncData.sessions.length === 0) && (!syncData.records || syncData.records.length === 0)) {
+    return; // Nothing to sync
+  }
+
+  const supabase = createClient(config.supabaseUrl, config.supabaseAnonKey);
+
+  // 2. Push unsynced sessions
+  const syncedSessionIds: number[] = [];
+  if (syncData.sessions && syncData.sessions.length > 0) {
+    const rows = syncData.sessions.map((s: Record<string, unknown>) => ({
+      id: s.id,
+      machine_id: config.machineId,
+      sequence_id: s.sequence_id,
+      sequence_name: s.sequence_name,
+      started_at: s.started_at ? new Date(s.started_at as number).toISOString() : null,
+      ended_at: s.ended_at ? new Date(s.ended_at as number).toISOString() : null,
+      total_edits: s.total_edits ?? 0,
+      video_id: s.video_id ?? null,
+    }));
+    const { error } = await supabase
+      .from('sessions')
+      .upsert(rows, { onConflict: 'machine_id,id' });
+    if (error) {
+      console.error('[CutWatcherSync] Session push error:', error.message);
+    } else {
+      syncedSessionIds.push(...syncData.sessions.map((s: Record<string, unknown>) => s.id as number));
+      console.log(`[CutWatcherSync] Pushed ${rows.length} sessions`);
+    }
+  }
+
+  // 3. Push unsynced cut records
+  const syncedRecordIds: number[] = [];
+  if (syncData.records && syncData.records.length > 0) {
+    const BATCH = 500;
+    for (let i = 0; i < syncData.records.length; i += BATCH) {
+      const batch = syncData.records.slice(i, i + BATCH);
+      const rows = batch.map((r: Record<string, unknown>) => ({
+        id: r.id,
+        machine_id: config.machineId,
+        session_id: r.session_id,
+        edit_type: r.edit_type,
+        edit_point_time: r.edit_point_time,
+        clip_name: r.clip_name,
+        media_path: r.media_path,
+        track_index: r.track_index,
+        track_type: r.track_type,
+        audio_category: r.audio_category ?? null,
+        rating: r.rating ?? null,
+        is_undo: r.is_undo === 1 || r.is_undo === true,
+        detected_at: r.detected_at ? new Date(r.detected_at as number).toISOString() : null,
+        boosted: r.boosted === 1 || r.boosted === true,
+        intent_tags: r.intent_tags ? (typeof r.intent_tags === 'string' ? JSON.parse(r.intent_tags as string) : r.intent_tags) : [],
+        audio_level: r.audio_level ?? null,
+        audio_level_delta: r.audio_level_delta ?? null,
+        is_on_silence: r.is_on_silence === 1 || r.is_on_silence === true,
+        sequence_id: r.sequence_id ?? null,
+        sequence_name: r.sequence_name ?? null,
+        video_id: r.video_id ?? null,
+      }));
+      const { error } = await supabase
+        .from('cut_records')
+        .upsert(rows, { onConflict: 'machine_id,id' });
+      if (error) {
+        console.error('[CutWatcherSync] Record push error:', error.message);
+      } else {
+        syncedRecordIds.push(...batch.map((r: Record<string, unknown>) => r.id as number));
+      }
+    }
+    if (syncedRecordIds.length > 0) {
+      console.log(`[CutWatcherSync] Pushed ${syncedRecordIds.length} cut records`);
+    }
+  }
+
+  // 4. Mark synced in local DB
+  try {
+    if (syncedSessionIds.length > 0) {
+      await fetch(`${serverBase}/mark-synced`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ table: 'sessions', ids: syncedSessionIds }),
+      });
+    }
+    if (syncedRecordIds.length > 0) {
+      await fetch(`${serverBase}/mark-synced`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ table: 'cut_records', ids: syncedRecordIds }),
+      });
+    }
+  } catch {
+    console.error('[CutWatcherSync] Failed to mark records as synced');
+  }
+}
+
+function startCutWatcherAutoSync(): void {
+  const config = loadConfig();
+  if (!config.supabaseUrl || !config.supabaseAnonKey) {
+    console.log('[CutWatcherSync] Supabase not configured, skipping auto-sync');
+    return;
+  }
+  if (_cutWatcherSyncTimer) return;
+
+  console.log('[CutWatcherSync] Starting periodic sync (every 60s)');
+  // Run once immediately, then on interval
+  syncCutWatcherToSupabase().catch(err => console.error('[CutWatcherSync] Initial sync error:', err));
+  _cutWatcherSyncTimer = setInterval(() => {
+    syncCutWatcherToSupabase().catch(err => console.error('[CutWatcherSync] Periodic sync error:', err));
+  }, CUT_WATCHER_SYNC_INTERVAL_MS);
+}
+
 export function registerCuttingBoardHandlers(): void {
   try {
+
+  // Start auto-sync for cut watcher data
+  startCutWatcherAutoSync();
 
   ipcMain.handle('cuttingBoard:getAggregateStats', async () => {
     try {
