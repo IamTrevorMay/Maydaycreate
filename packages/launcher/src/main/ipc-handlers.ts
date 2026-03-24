@@ -310,3 +310,23 @@ export function bridgeServerEvents(): void {
     if (_win && !_win.isDestroyed()) _win.webContents.send('server:statusChanged', status);
   });
 }
+
+/** Push plugin list to renderer whenever plugins change (activate/deactivate/reload) */
+export function bridgePluginEvents(): void {
+  const bridge = getServerBridge();
+  if (!bridge || !_win) return;
+
+  const push = () => {
+    if (_win && !_win.isDestroyed()) {
+      _win.webContents.send('plugins:changed', bridge.lifecycle.getAllPlugins());
+    }
+  };
+
+  // Send current state immediately (covers the server-ready race)
+  push();
+
+  // Forward lifecycle events
+  for (const event of ['plugin:activated', 'plugin:deactivated', 'plugin:reloaded']) {
+    bridge.eventBus.on(event, () => push());
+  }
+}

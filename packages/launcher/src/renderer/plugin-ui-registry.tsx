@@ -60,11 +60,37 @@ export function PluginUIRegistryProvider({ children }: { children: React.ReactNo
   const ipc = useIpc();
   const [plugins, setPlugins] = useState<LauncherPluginInfo[]>([]);
 
-  // Fetch plugin list on mount
+  // Fetch plugin list on mount + poll until plugins arrive (server may still be starting)
   useEffect(() => {
-    ipc.plugins.getAll().then(setPlugins).catch(() => {});
-    const unsub = ipc.plugins.onChanged(setPlugins);
-    return unsub;
+    let retryTimer: ReturnType<typeof setTimeout> | null = null;
+    let retryCount = 0;
+
+    const fetchPlugins = async () => {
+      try {
+        const all = await ipc.plugins.getAll();
+        setPlugins(all);
+        // Retry up to 10 times if empty (server may still be loading)
+        if (all.length === 0 && retryCount < 10) {
+          retryCount++;
+          retryTimer = setTimeout(fetchPlugins, 1500);
+        }
+      } catch {
+        if (retryCount < 10) {
+          retryCount++;
+          retryTimer = setTimeout(fetchPlugins, 1500);
+        }
+      }
+    };
+
+    fetchPlugins();
+    const unsub = ipc.plugins.onChanged((all) => {
+      setPlugins(all);
+      retryCount = 10; // Stop retrying once we get a push
+    });
+    return () => {
+      unsub();
+      if (retryTimer) clearTimeout(retryTimer);
+    };
   }, [ipc]);
 
   // Build plugin sidebar entries from manifests that declare ui.page

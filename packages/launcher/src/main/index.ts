@@ -13,6 +13,7 @@ import {
   registerCutFinderIpc,
   bridgeSyncEvents,
   bridgeServerEvents,
+  bridgePluginEvents,
 } from './ipc-handlers.js';
 import { createTray } from './tray.js';
 import { SyncEngine } from '@mayday/sync-engine';
@@ -206,6 +207,9 @@ app.whenReady().then(async () => {
     machineId: config.machineId,
     machineName: config.machineName,
   });
+
+  // Push plugin list to renderer now that server + plugins are ready
+  bridgePluginEvents();
 
   // YouTube → Supabase sync
   const ytSync = new YouTubeSyncService();
