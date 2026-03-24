@@ -1,6 +1,6 @@
 {
   "name": "mayday-create",
-  "version": "1.0.7",
+  "version": "1.0.8",
   "private": true,
   "description": "Plugin development platform for Adobe Premiere Pro 2026",
   "workspaces": [
