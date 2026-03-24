@@ -93,6 +93,8 @@ function runStep(
       stdio: ['ignore', 'pipe', 'pipe'],
     });
 
+    let stderrBuf = '';
+
     proc.stdout.on('data', (data) => {
       const lines = data.toString().split('\n').filter(Boolean);
       for (const line of lines) {
@@ -101,7 +103,9 @@ function runStep(
     });
 
     proc.stderr.on('data', (data) => {
-      const lines = data.toString().split('\n').filter(Boolean);
+      const chunk = data.toString();
+      stderrBuf += chunk;
+      const lines = chunk.split('\n').filter(Boolean);
       for (const line of lines) {
         sendProgress(win, { phase, message: line, pct: -1, done: false });
       }
@@ -109,7 +113,12 @@ function runStep(
 
     proc.on('close', (code) => {
       if (code === 0) resolve();
-      else reject(new Error(`"${cmd} ${args.join(' ')}" failed with exit code ${code}`));
+      else {
+        // Log full stderr for debugging
+        const last500 = stderrBuf.slice(-500).trim();
+        console.error(`[PushVersion] ${cmd} ${args.join(' ')} failed (exit ${code}):\n${stderrBuf}`);
+        reject(new Error(`"${cmd} ${args.join(' ')}" failed (exit ${code}):\n${last500}`));
+      }
     });
 
     proc.on('error', reject);
