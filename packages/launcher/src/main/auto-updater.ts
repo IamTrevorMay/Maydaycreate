@@ -45,6 +45,11 @@ function getSpawnEnv(extraEnv?: Record<string, string>): NodeJS.ProcessEnv {
   if (missing.length) {
     env.PATH = [...missing, current].join(':');
   }
+  // Remove Electron-specific env vars that break external builds (tsup/esbuild)
+  delete env.ESBUILD_BINARY_PATH;
+  delete env.NODE_PATH;
+  // Remove Electron's internal env vars that confuse child Node processes
+  delete env.ELECTRON_RUN_AS_NODE;
   return env;
 }
 
