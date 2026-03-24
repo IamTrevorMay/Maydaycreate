@@ -1,6 +1,6 @@
 {
   "name": "@mayday/launcher",
-  "version": "1.0.1",
+  "version": "1.0.2",
   "private": true,
   "description": "Plugin development platform for Adobe Premiere Pro",
   "author": "Mayday",
