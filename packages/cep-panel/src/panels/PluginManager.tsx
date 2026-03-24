@@ -1,4 +1,5 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useRef } from 'react';
+import { INTENT_TAGS } from '@mayday/types';
 
 interface PluginInfo {
   manifest: {
@@ -6,9 +7,21 @@ interface PluginInfo {
     name: string;
     version: string;
     description: string;
-    commands?: Array<{ id: string; name: string; description?: string }>;
+    commands?: Array<{ id: string; name: string; description?: string; hidden?: boolean }>;
   };
   status: string;
+}
+
+interface SessionEndResult {
+  sessionId: number;
+  totalEdits: number;
+  editsByType: Record<string, number>;
+  approvalRate: number | null;
+  thumbsUp: number;
+  thumbsDown: number;
+  boostedCount: number;
+  undoCount: number;
+  tagCounts: Record<string, number>;
 }
 
 export function PluginManager() {
@@ -17,6 +30,9 @@ export function PluginManager() {
   const [toast, setToast] = useState<string | null>(null);
   const [pendingEdits, setPendingEdits] = useState<Array<Record<string, unknown>> | null>(null);
   const [scanSummary, setScanSummary] = useState<string | null>(null);
+  const [sessionModal, setSessionModal] = useState<SessionEndResult | null>(null);
+  const [sessionName, setSessionName] = useState('');
+  const nameInputRef = useRef<HTMLInputElement>(null);
 
   const fetchPlugins = async () => {
     try {
@@ -67,6 +83,10 @@ export function PluginManager() {
           setPendingEdits(r.edits);
           setScanSummary(`${r.plannedEdits} edits planned across ${r.totalClips} clips (avg confidence: ${(r.avgConfidence * 100).toFixed(0)}%)`);
           setToast(`Scan complete — ${r.plannedEdits} edits found. Click "Execute Autocut" to apply.`);
+        } else if (commandId === 'stop-capture' && data.result?.sessionId) {
+          setSessionModal(data.result as SessionEndResult);
+          setSessionName('');
+          setTimeout(() => nameInputRef.current?.focus(), 100);
         } else if (commandId === 'execute-autocut') {
           const r = data.result;
           setPendingEdits(null);
@@ -83,6 +103,23 @@ export function PluginManager() {
     }
   };
 
+  const saveSessionName = async () => {
+    if (!sessionModal) return;
+    const name = sessionName.trim();
+    if (name) {
+      try {
+        await fetch('http://localhost:9876/api/plugins/cutting-board/command/name-session', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ sessionId: sessionModal.sessionId, sessionName: name }),
+        });
+      } catch { /* best effort */ }
+    }
+    setSessionModal(null);
+    setSessionName('');
+    setToast(name ? `Session saved as "${name}"` : 'Session ended');
+  };
+
   if (loading) {
     return <div style={{ padding: 12, color: '#888' }}>Loading plugins...</div>;
   }
@@ -97,6 +134,105 @@ export function PluginManager() {
           cursor: 'pointer',
         }} onClick={() => setToast(null)}>
           {toast}
+        </div>
+      )}
+
+      {/* Session naming modal */}
+      {sessionModal && (
+        <div style={{
+          position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.7)',
+          display: 'flex', alignItems: 'center', justifyContent: 'center',
+          zIndex: 500,
+        }}>
+          <div style={{
+            background: '#1e1e2e', border: '1px solid #444', borderRadius: 8,
+            padding: 16, width: 280, boxShadow: '0 8px 32px rgba(0,0,0,0.6)',
+          }}>
+            <div style={{ fontSize: 13, fontWeight: 600, color: '#e2e8f0', marginBottom: 12 }}>
+              Session Complete
+            </div>
+
+            {/* Stats summary */}
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 6, marginBottom: 12 }}>
+              <div style={{ background: '#2a2a3e', borderRadius: 4, padding: '6px 8px', textAlign: 'center' }}>
+                <div style={{ fontSize: 16, fontWeight: 700, color: '#e2e8f0' }}>{sessionModal.totalEdits}</div>
+                <div style={{ fontSize: 9, color: '#888' }}>Edits</div>
+              </div>
+              <div style={{ background: '#2a2a3e', borderRadius: 4, padding: '6px 8px', textAlign: 'center' }}>
+                <div style={{ fontSize: 16, fontWeight: 700, color: '#4ade80' }}>
+                  {sessionModal.approvalRate != null ? `${(sessionModal.approvalRate * 100).toFixed(0)}%` : '--'}
+                </div>
+                <div style={{ fontSize: 9, color: '#888' }}>Approval</div>
+              </div>
+            </div>
+
+            {/* Edit type breakdown */}
+            {Object.keys(sessionModal.editsByType).length > 0 && (
+              <div style={{ marginBottom: 10 }}>
+                <div style={{ fontSize: 9, color: '#666', marginBottom: 4 }}>Edit Types</div>
+                <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
+                  {Object.entries(sessionModal.editsByType).map(([type, count]) => (
+                    <span key={type} style={{
+                      background: '#1e3a5f', color: '#93c5fd', borderRadius: 3,
+                      padding: '2px 6px', fontSize: 9, fontWeight: 500,
+                    }}>
+                      {count} {type}
+                    </span>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* Tag breakdown */}
+            {Object.keys(sessionModal.tagCounts).length > 0 && (
+              <div style={{ marginBottom: 10 }}>
+                <div style={{ fontSize: 9, color: '#666', marginBottom: 4 }}>Tags Applied</div>
+                <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
+                  {INTENT_TAGS
+                    .filter(t => (sessionModal.tagCounts[t.id] || 0) > 0)
+                    .map(tag => (
+                      <span key={tag.id} style={{
+                        background: '#2d1b69', color: '#a855f7', borderRadius: 3,
+                        padding: '2px 6px', fontSize: 9, fontWeight: 500,
+                      }}>
+                        {sessionModal.tagCounts[tag.id]} {tag.label}
+                      </span>
+                    ))}
+                </div>
+              </div>
+            )}
+
+            {/* Name input */}
+            <div style={{ marginBottom: 12 }}>
+              <div style={{ fontSize: 9, color: '#666', marginBottom: 4 }}>Session Name</div>
+              <input
+                ref={nameInputRef}
+                value={sessionName}
+                onChange={(e) => setSessionName(e.target.value)}
+                onKeyDown={(e) => { if (e.key === 'Enter') saveSessionName(); }}
+                placeholder="e.g. Episode 47 rough cut"
+                style={{
+                  width: '100%', background: '#111', border: '1px solid #444',
+                  borderRadius: 4, padding: '6px 8px', fontSize: 11,
+                  color: '#e2e8f0', outline: 'none', boxSizing: 'border-box',
+                }}
+              />
+            </div>
+
+            {/* Actions */}
+            <div style={{ display: 'flex', gap: 6 }}>
+              <button
+                onClick={saveSessionName}
+                style={{
+                  flex: 1, background: '#2680eb', color: '#fff', border: 'none',
+                  borderRadius: 4, padding: '6px 0', fontSize: 11, fontWeight: 600,
+                  cursor: 'pointer',
+                }}
+              >
+                {sessionName.trim() ? 'Save' : 'Skip'}
+              </button>
+            </div>
+          </div>
         </div>
       )}
 
@@ -144,7 +280,7 @@ export function PluginManager() {
             )}
             {plugin.manifest.commands && plugin.status === 'activated' && (
               <div style={{ marginTop: 6, display: 'flex', gap: 4, flexWrap: 'wrap' }}>
-                {plugin.manifest.commands.map((cmd) => (
+                {plugin.manifest.commands.filter(cmd => !cmd.hidden).map((cmd) => (
                   <button
                     key={cmd.id}
                     onClick={() => runCommand(plugin.manifest.id, cmd.id)}

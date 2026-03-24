@@ -424,27 +424,38 @@ export default definePlugin({
       if (db) {
         db.endSession(currentSessionId, editCount);
         const stats = db.getSessionStats(currentSessionId);
-
-        const typeSummary = Object.entries(stats.editsByType)
-          .map(([type, count]) => `${count} ${type}`)
-          .join(', ');
-
-        const msg = `Session ended: ${stats.totalEdits} edits (${typeSummary})${stats.approvalRate != null ? `, ${(stats.approvalRate * 100).toFixed(0)}% approval` : ''}`;
-        ctx.log.info(msg);
-        ctx.ui.showToast(msg, 'info');
-
         const sessionId = currentSessionId;
+
+        ctx.log.info(`Session ${sessionId} ended: ${stats.totalEdits} edits`);
+
         currentSessionId = null;
         currentVideoId = null;
         previousSnapshot = null;
         snapshotHistory = [];
         editCount = 0;
 
-        return stats;
+        return { ...stats, sessionId };
       }
 
       cleanup();
       return null;
+    },
+
+    'name-session': async (ctx, args) => {
+      if (!db) {
+        db = new CuttingBoardDB(ctx.dataDir);
+      }
+      const { sessionId, sessionName } = args as { sessionId: number; sessionName: string };
+      db.nameSession(sessionId, sessionName);
+      ctx.log.info(`Session ${sessionId} named: "${sessionName}"`);
+      return { sessionId, sessionName };
+    },
+
+    'unnamed-sessions': async (ctx) => {
+      if (!db) {
+        db = new CuttingBoardDB(ctx.dataDir);
+      }
+      return db.getUnnamedEndedSessions();
     },
 
     stats: async (ctx) => {

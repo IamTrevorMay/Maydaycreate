@@ -288,6 +288,7 @@ async function syncCutWatcherToSupabase(): Promise<void> {
       machine_id: config.machineId,
       sequence_id: s.sequence_id,
       sequence_name: s.sequence_name,
+      session_name: s.session_name ?? null,
       started_at: s.started_at ? new Date(s.started_at as number).toISOString() : null,
       ended_at: s.ended_at ? new Date(s.ended_at as number).toISOString() : null,
       total_edits: s.total_edits ?? 0,

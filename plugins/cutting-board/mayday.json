@@ -25,6 +25,18 @@
       "name": "Stop Capture",
       "description": "Stop polling and show session stats"
     },
+    {
+      "id": "name-session",
+      "name": "Name Session",
+      "description": "Set a user-friendly name on a completed session",
+      "hidden": true
+    },
+    {
+      "id": "unnamed-sessions",
+      "name": "Unnamed Sessions",
+      "description": "List ended sessions that have no name yet",
+      "hidden": true
+    },
 {
       "id": "train-model",
       "name": "Train Model",

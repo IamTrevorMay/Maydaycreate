@@ -63,6 +63,7 @@ export class SupabaseSyncService {
           machine_name: this.config!.machineName,
           sequence_id: s.sequence_id,
           sequence_name: s.sequence_name,
+          session_name: (s.session_name as string) ?? null,
           started_at: s.started_at,
           ended_at: s.ended_at ?? null,
           total_edits: s.total_edits ?? 0,

@@ -92,6 +92,11 @@ export class CuttingBoardDB {
       this.db.exec(`ALTER TABLE cut_records ADD COLUMN audio_level_delta REAL;`);
       this.db.exec(`ALTER TABLE cut_records ADD COLUMN is_on_silence INTEGER DEFAULT 0;`);
     }
+
+    // Migration: add session_name column
+    if (!sessionCols.some(c => c.name === 'session_name')) {
+      this.db.exec(`ALTER TABLE sessions ADD COLUMN session_name TEXT;`);
+    }
   }
 
   createSession(sequenceId: string, sequenceName: string, videoId?: string): number {
@@ -116,6 +121,18 @@ export class CuttingBoardDB {
     this.db.prepare(
       'UPDATE sessions SET ended_at = ?, total_edits = ? WHERE id = ?'
     ).run(Date.now(), totalEdits, sessionId);
+  }
+
+  nameSession(sessionId: number, sessionName: string): void {
+    this.db.prepare(
+      'UPDATE sessions SET session_name = ?, synced_at = NULL WHERE id = ?'
+    ).run(sessionName, sessionId);
+  }
+
+  getUnnamedEndedSessions(): Array<{ id: number; sequence_name: string; total_edits: number; started_at: number }> {
+    return this.db.prepare(
+      'SELECT id, sequence_name, total_edits, started_at FROM sessions WHERE ended_at IS NOT NULL AND session_name IS NULL'
+    ).all() as Array<{ id: number; sequence_name: string; total_edits: number; started_at: number }>;
   }
 
   insertRecord(record: Omit<CutRecord, 'id'>): number {
@@ -192,6 +209,7 @@ export class CuttingBoardDB {
     thumbsDown: number;
     boostedCount: number;
     undoCount: number;
+    tagCounts: Record<string, number>;
   } {
     const total = this.db.prepare(
       'SELECT COUNT(*) as count FROM cut_records WHERE session_id = ?'
@@ -225,6 +243,20 @@ export class CuttingBoardDB {
       editsByType[row.edit_type] = row.count;
     }
 
+    // Tag counts for this session
+    const tagRows = this.db.prepare(
+      "SELECT intent_tags FROM cut_records WHERE session_id = ? AND intent_tags IS NOT NULL AND intent_tags != '[]'"
+    ).all(sessionId) as { intent_tags: string }[];
+    const tagCounts: Record<string, number> = {};
+    for (const row of tagRows) {
+      try {
+        const tags: string[] = JSON.parse(row.intent_tags);
+        for (const t of tags) {
+          tagCounts[t] = (tagCounts[t] || 0) + 1;
+        }
+      } catch { /* skip malformed */ }
+    }
+
     return {
       totalEdits: total.count,
       editsByType,
@@ -233,6 +265,7 @@ export class CuttingBoardDB {
       thumbsDown,
       boostedCount,
       undoCount: undos.count,
+      tagCounts,
     };
   }
 
