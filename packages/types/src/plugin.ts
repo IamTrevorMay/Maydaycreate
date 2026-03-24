@@ -59,6 +59,7 @@ export interface PluginCommand {
   name: string;
   description?: string;
   icon?: string;
+  hidden?: boolean;
 }
 
 export interface PluginConfigSchema {

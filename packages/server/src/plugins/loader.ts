@@ -18,6 +18,7 @@ const ManifestSchema = z.object({
     name: z.string(),
     description: z.string().optional(),
     icon: z.string().optional(),
+    hidden: z.boolean().optional(),
   })).optional(),
   config: z.record(z.object({
     type: z.enum(['string', 'number', 'boolean', 'select']),
