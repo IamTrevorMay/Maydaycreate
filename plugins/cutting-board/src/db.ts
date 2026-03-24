@@ -150,19 +150,19 @@ export class CuttingBoardDB {
 
   updateRating(recordId: number, rating: number, notes?: string): void {
     this.db.prepare(
-      'UPDATE cut_records SET rating = ?, notes = ?, feedback_at = ? WHERE id = ?'
+      'UPDATE cut_records SET rating = ?, notes = ?, feedback_at = ?, synced_at = NULL WHERE id = ?'
     ).run(rating, notes || null, Date.now(), recordId);
   }
 
   boostRecord(recordId: number): void {
     this.db.prepare(
-      'UPDATE cut_records SET boosted = 1 WHERE id = ?'
+      'UPDATE cut_records SET boosted = 1, synced_at = NULL WHERE id = ?'
     ).run(recordId);
   }
 
   setIntentTags(recordId: number, tags: string[]): void {
     this.db.prepare(
-      'UPDATE cut_records SET intent_tags = ? WHERE id = ?'
+      'UPDATE cut_records SET intent_tags = ?, synced_at = NULL WHERE id = ?'
     ).run(JSON.stringify(tags), recordId);
     // Any tags imply the user valued this cut — also set boosted for training weight
     if (tags.length > 0) {
