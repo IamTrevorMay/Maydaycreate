@@ -1,0 +1,13 @@
+{
+  "id": "stream-deck-excalibur",
+  "name": "Stream Deck & Excalibur",
+  "version": "0.1.0",
+  "description": "Stream Deck hardware integration with Excalibur preset execution and button assignment",
+  "main": "src/index.ts",
+  "permissions": ["effects", "timeline"],
+  "marketplace": {
+    "category": "hardware",
+    "tags": ["stream-deck", "excalibur", "buttons", "macros"]
+  },
+  "targetApp": "premiere"
+}

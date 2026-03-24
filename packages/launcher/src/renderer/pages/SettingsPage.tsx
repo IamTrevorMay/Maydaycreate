@@ -1,13 +1,18 @@
 import React, { useState, useEffect } from 'react';
 import { useIpc } from '../hooks/useIpc.js';
+import { useHistory } from '../hooks/useHistory.js';
 import { MigrationWizard } from '../components/MigrationWizard.js';
 import { UpdateWizard } from '../components/UpdateWizard.js';
 import { PushWizard } from '../components/PushWizard.js';
+import { HistorySnapshotRow } from '../components/HistorySnapshot.js';
 import type { LauncherConfig } from '../../main/config-store.js';
+import type { HistorySnapshot } from '@mayday/sync-engine';
 import { c } from '../styles.js';
 
 export function SettingsPage(): React.ReactElement {
   const ipc = useIpc();
+  const { snapshots, loading: historyLoading, createSnapshot, restore } = useHistory();
+  const [confirmRestore, setConfirmRestore] = useState<HistorySnapshot | null>(null);
   const [config, setConfig] = useState<LauncherConfig | null>(null);
   const [showMigration, setShowMigration] = useState(false);
   const [showUpdateWizard, setShowUpdateWizard] = useState(false);
@@ -136,6 +141,32 @@ export function SettingsPage(): React.ReactElement {
   return (
     <div style={{ padding: '20px 24px', display: 'flex', flexDirection: 'column', gap: 20 }}>
       <h2 style={{ color: c.text.primary, fontSize: 16, fontWeight: 600 }}>Settings</h2>
+
+      {/* History / Snapshots */}
+      <Section title="Snapshots">
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: snapshots.length > 0 ? 10 : 0 }}>
+          <span style={{ fontSize: 12, color: c.text.secondary }}>
+            Restore sync configs to a previous state
+          </span>
+          <button onClick={createSnapshot} style={{
+            padding: '4px 12px', borderRadius: 4, border: 'none',
+            background: c.accent.primary, color: '#fff', fontSize: 11, cursor: 'pointer',
+          }}>
+            Create Snapshot
+          </button>
+        </div>
+        {historyLoading && (
+          <span style={{ fontSize: 12, color: c.text.disabled }}>Loading...</span>
+        )}
+        {!historyLoading && snapshots.length === 0 && (
+          <span style={{ fontSize: 12, color: c.text.disabled }}>
+            No snapshots yet. Create one before making changes.
+          </span>
+        )}
+        {snapshots.map(s => (
+          <HistorySnapshotRow key={s.id} snapshot={s} onRestore={setConfirmRestore} />
+        ))}
+      </Section>
 
       {/* Sync source */}
       <Section title="Sync Source">
@@ -560,6 +591,43 @@ export function SettingsPage(): React.ReactElement {
           onDone={() => setShowPushWizard(false)}
           onCancel={() => setShowPushWizard(false)}
         />
+      )}
+
+      {confirmRestore && (
+        <div
+          style={{
+            position: 'fixed', inset: 0, background: '#0008',
+            display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 50,
+          }}
+        >
+          <div
+            style={{
+              background: c.bg.elevated, border: `1px solid ${c.border.default}`,
+              borderRadius: 8, padding: 28, width: 400,
+              display: 'flex', flexDirection: 'column', gap: 16,
+            }}
+          >
+            <h3 style={{ color: c.text.primary, fontSize: 15 }}>Restore Snapshot?</h3>
+            <p style={{ color: c.text.secondary, fontSize: 12 }}>
+              This will overwrite your current sync configs with the snapshot from{' '}
+              <strong style={{ color: c.text.primary }}>
+                {new Date(confirmRestore.timestamp).toLocaleString()}
+              </strong>. A backup will be created automatically.
+            </p>
+            <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
+              <button onClick={() => setConfirmRestore(null)} style={secondaryBtn}>Cancel</button>
+              <button
+                onClick={async () => { await restore(confirmRestore); setConfirmRestore(null); }}
+                style={{
+                  padding: '6px 14px', borderRadius: 4, border: 'none',
+                  background: '#f87171', color: '#fff', fontSize: 12, cursor: 'pointer',
+                }}
+              >
+                Restore
+              </button>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );

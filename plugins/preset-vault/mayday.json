@@ -4,6 +4,11 @@
   "version": "0.1.0",
   "description": "Capture, save, and re-apply Premiere Pro effect stacks across clips and projects",
   "main": "src/index.ts",
+  "marketplace": {
+    "category": "effects",
+    "tags": ["presets", "effects", "excalibur", "macros"]
+  },
+  "targetApp": "premiere",
   "commands": [
     {
       "id": "capture",

@@ -1,9 +1,6 @@
 import React, { useState, useEffect } from 'react';
-import { DashboardPage } from './pages/DashboardPage.js';
+import { MarketplacePage } from './pages/MarketplacePage.js';
 import { SyncPage } from './pages/SyncPage.js';
-import { ConflictPage } from './pages/ConflictPage.js';
-import { HistoryPage } from './pages/HistoryPage.js';
-import { InstallerPage } from './pages/InstallerPage.js';
 import { SettingsPage } from './pages/SettingsPage.js';
 import { YouTubePage } from './pages/YouTubePage.js';
 import { CuttingBoardPage } from './pages/CuttingBoardPage.js';
@@ -14,31 +11,52 @@ import { useIpc } from './hooks/useIpc.js';
 import { useAnalysisProgress } from './hooks/useAnalysisProgress.js';
 import type { ServerStatus, AnalysisProgress as AnalysisProgressType } from '@mayday/types';
 import { c } from './styles.js';
+import {
+  PluginUIRegistryProvider,
+  usePluginUIRegistry,
+  registerPageComponent,
+} from './plugin-ui-registry.js';
+import type { SidebarEntry } from './plugin-ui-registry.js';
 
-type Page = 'dashboard' | 'sync' | 'conflicts' | 'history' | 'installer' | 'youtube' | 'cutting-board' | 'settings';
+// ── Register core page components ──────────────────────────────────────────────
+// Maps page IDs from the registry to their React components.
 
-interface NavItem {
-  id: Page;
-  label: string;
-  badge?: number;
+registerPageComponent('marketplace', MarketplacePage);
+registerPageComponent('sync', SyncPage);
+registerPageComponent('settings', SettingsPage);
+
+// Core plugins — code still lives in the renderer, sidebar entry comes from plugin manifest
+registerPageComponent('analyzer', YouTubePage);
+registerPageComponent('cutting-board', CuttingBoardPage);
+
+// ── App (outer wrapper with provider) ──────────────────────────────────────────
+
+export default function App(): React.ReactElement {
+  return (
+    <PluginUIRegistryProvider>
+      <AppInner />
+    </PluginUIRegistryProvider>
+  );
 }
+
+// ── AppInner (consumes registry context) ───────────────────────────────────────
 
 type AutoUpdateState = 'idle' | 'checking' | 'updating' | 'ready' | 'error';
 
-export default function App(): React.ReactElement {
-  const [page, setPage] = useState<Page>('dashboard');
+function AppInner(): React.ReactElement {
+  const [page, setPage] = useState('marketplace');
   const { status, runSync } = useSyncStatus();
   const ipc = useIpc();
   const [serverStatus, setServerStatus] = useState<ServerStatus | null>(null);
   const analysisProgress = useAnalysisProgress();
   const [updateState, setUpdateState] = useState<AutoUpdateState>('idle');
   const [bannerDismissed, setBannerDismissed] = useState(false);
+  const registry = usePluginUIRegistry();
 
   // Poll server status on mount and subscribe to push updates
   useEffect(() => {
     const poll = () => ipc.server.getStatus().then(setServerStatus);
     poll();
-    // Poll every 2s until online, then rely on push events (emitted every 5s from main)
     const interval = setInterval(poll, 2000);
     const unsub = ipc.server.onStatus(setServerStatus);
     return () => { clearInterval(interval); unsub(); };
@@ -59,16 +77,20 @@ export default function App(): React.ReactElement {
     return unsub;
   }, [ipc]);
 
-  const navItems: NavItem[] = [
-    { id: 'dashboard', label: 'Plugins' },
-    { id: 'sync', label: 'Sync' },
-    { id: 'conflicts', label: 'Conflicts', badge: status.conflictCount || undefined },
-    { id: 'history', label: 'History' },
-    { id: 'installer', label: 'Install' },
-    { id: 'youtube', label: 'Analyzer' },
-    { id: 'cutting-board', label: 'Cutting Board' },
-    { id: 'settings', label: 'Settings' },
-  ];
+  // Inject dynamic badge for conflicts
+  const sidebarEntries = registry.sidebarEntries.map((entry) => {
+    if (entry.id === 'conflicts' && status.conflictCount > 0) {
+      return { ...entry, badge: status.conflictCount };
+    }
+    return entry;
+  });
+
+  // Split into core and plugin entries for separator rendering
+  const coreEntries = sidebarEntries.filter((e) => e.type === 'core');
+  const pluginEntries = sidebarEntries.filter((e) => e.type === 'plugin');
+
+  // Resolve page component
+  const PageComponent = registry.getPageComponent(page);
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100vh', overflow: 'hidden' }}>
@@ -84,7 +106,6 @@ export default function App(): React.ReactElement {
           flexShrink: 0,
         } as React.CSSProperties}
       >
-        {/* Non-draggable server status */}
         <div style={{ WebkitAppRegion: 'no-drag', marginLeft: 80 } as React.CSSProperties}>
           <ServerStatusIndicator status={serverStatus} />
         </div>
@@ -135,7 +156,7 @@ export default function App(): React.ReactElement {
             flexShrink: 0,
           }}
         >
-          {navItems.map(item => (
+          {coreEntries.map(item => (
             <NavButton
               key={item.id}
               item={item}
@@ -143,26 +164,40 @@ export default function App(): React.ReactElement {
               onClick={() => setPage(item.id)}
             />
           ))}
-          {page !== 'youtube' && analysisProgress && analysisProgress.status !== 'complete' && analysisProgress.status !== 'error' && analysisProgress.status !== 'cancelled' && (
-            <MiniAnalysisIndicator progress={analysisProgress} onClick={() => setPage('youtube')} />
+
+          {/* Separator between core and plugin entries */}
+          {pluginEntries.length > 0 && (
+            <div style={{
+              height: 1,
+              background: c.border.default,
+              margin: '8px 16px',
+            }} />
+          )}
+
+          {pluginEntries.map(item => (
+            <NavButton
+              key={item.id}
+              item={item}
+              active={page === item.id}
+              onClick={() => setPage(item.id)}
+            />
+          ))}
+
+          {page !== 'analyzer' && analysisProgress && analysisProgress.status !== 'complete' && analysisProgress.status !== 'error' && analysisProgress.status !== 'cancelled' && (
+            <MiniAnalysisIndicator progress={analysisProgress} onClick={() => setPage('analyzer')} />
           )}
         </nav>
 
         {/* Content area */}
         <main style={{ flex: 1, overflow: 'auto', background: c.bg.primary }}>
-          {page === 'dashboard' && <DashboardPage />}
-          {page === 'sync' && <SyncPage />}
-          {page === 'conflicts' && <ConflictPage />}
-          {page === 'history' && <HistoryPage />}
-          {page === 'installer' && <InstallerPage />}
-          {page === 'youtube' && <YouTubePage />}
-          {page === 'cutting-board' && <CuttingBoardPage />}
-          {page === 'settings' && <SettingsPage />}
+          {PageComponent ? <PageComponent /> : <MarketplacePage />}
         </main>
       </div>
     </div>
   );
 }
+
+// ── Sub-components ─────────────────────────────────────────────────────────────
 
 function MiniAnalysisIndicator({ progress, onClick }: { progress: AnalysisProgressType; onClick: () => void }): React.ReactElement {
   const isPaused = progress.status === 'paused';
@@ -182,7 +217,6 @@ function MiniAnalysisIndicator({ progress, onClick }: { progress: AnalysisProgre
         textAlign: 'left',
       }}
     >
-      {/* Progress bar */}
       <div style={{
         height: 3,
         background: c.bg.tertiary,
@@ -198,7 +232,6 @@ function MiniAnalysisIndicator({ progress, onClick }: { progress: AnalysisProgre
           transition: 'width 0.3s',
         }} />
       </div>
-      {/* Status line */}
       <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
         <span style={{
           width: 6,
@@ -223,7 +256,7 @@ function NavButton({
   active,
   onClick,
 }: {
-  item: NavItem;
+  item: SidebarEntry;
   active: boolean;
   onClick: () => void;
 }): React.ReactElement {

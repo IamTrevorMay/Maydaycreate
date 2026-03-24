@@ -4,6 +4,16 @@
   "version": "0.1.0",
   "description": "Detect edits in the timeline, rate them, and store structured data for model training",
   "main": "src/index.ts",
+  "ui": {
+    "page": true,
+    "sidebarLabel": "Cutting Board",
+    "sidebarOrder": 51
+  },
+  "marketplace": {
+    "category": "editing",
+    "tags": ["cuts", "training", "autocut", "AI"]
+  },
+  "targetApp": "premiere",
   "commands": [
     {
       "id": "start-capture",

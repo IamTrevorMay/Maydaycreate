@@ -12,7 +12,47 @@ export interface PluginManifest {
   commands?: PluginCommand[];
   config?: PluginConfigSchema;
   permissions?: PluginPermission[];
+
+  /** UI declaration — tells the launcher how to render this plugin */
+  ui?: PluginUI_Manifest;
+
+  /** Marketplace metadata for browsing/discovery */
+  marketplace?: PluginMarketplace;
+
+  /** IDs of other plugins this one depends on */
+  dependencies?: string[];
+
+  /** Target host application */
+  targetApp?: PluginTargetApp;
 }
+
+export interface PluginUI_Manifest {
+  /** Whether this plugin gets its own sidebar tab + full page */
+  page?: boolean;
+  /** Sidebar display label (defaults to manifest.name) */
+  sidebarLabel?: string;
+  /** Sidebar icon — built-in icon key or relative path to SVG/PNG */
+  sidebarIcon?: string;
+  /** Sort order in sidebar (lower = higher). Default 100 */
+  sidebarOrder?: number;
+  /** Path to the plugin's UI entry file, relative to plugin root (e.g. "ui/index.html") */
+  rendererEntry?: string;
+}
+
+export type PluginCategory = 'editing' | 'analysis' | 'effects' | 'automation' | 'hardware' | 'utility';
+
+export interface PluginMarketplace {
+  category?: PluginCategory;
+  tags?: string[];
+  /** Icon path relative to plugin root */
+  icon?: string;
+  /** Screenshot paths relative to plugin root */
+  screenshots?: string[];
+  homepage?: string;
+  repository?: string;
+}
+
+export type PluginTargetApp = 'premiere' | 'davinci' | 'any';
 
 export interface PluginCommand {
   id: string;

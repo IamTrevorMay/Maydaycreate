@@ -1,4 +1,5 @@
 export { definePlugin } from './define-plugin.js';
+export { MaydayPluginUI } from './ui.js';
 
 // Re-export commonly used types for plugin authors
 export type {

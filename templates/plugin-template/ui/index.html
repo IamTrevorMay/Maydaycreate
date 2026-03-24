@@ -1,0 +1,99 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>My Plugin</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+      background: #1e1e1e;
+      color: #e0e0e0;
+      padding: 20px 24px;
+    }
+    h2 { font-size: 16px; font-weight: 600; margin-bottom: 16px; }
+    .card {
+      background: #303030;
+      border: 1px solid #333;
+      border-radius: 6px;
+      padding: 14px 16px;
+      margin-bottom: 12px;
+    }
+    .label { font-size: 11px; color: #999; text-transform: uppercase; letter-spacing: 1px; margin-bottom: 8px; }
+    .value { font-size: 13px; color: #e0e0e0; }
+    button {
+      padding: 6px 16px;
+      border-radius: 4px;
+      border: none;
+      background: #2680eb;
+      color: #fff;
+      font-size: 12px;
+      cursor: pointer;
+      margin-top: 12px;
+    }
+    button:hover { background: #3b91f7; }
+    #result { margin-top: 12px; font-size: 12px; color: #4ade80; }
+  </style>
+</head>
+<body>
+  <h2>My Plugin</h2>
+
+  <div class="card">
+    <div class="label">Status</div>
+    <div class="value" id="status">Connecting...</div>
+  </div>
+
+  <button id="run">Run Hello Command</button>
+  <div id="result"></div>
+
+  <script type="module">
+    // Simple postMessage integration (no SDK import needed for HTML-only plugins)
+    const status = document.getElementById('status');
+    const result = document.getElementById('result');
+    let reqCounter = 0;
+    const pending = new Map();
+
+    window.addEventListener('message', (event) => {
+      const msg = event.data;
+      if (!msg || !msg.type) return;
+
+      if (msg.type === 'host:theme') {
+        document.body.style.background = msg.tokens?.bg?.primary || '#1e1e1e';
+        document.body.style.color = msg.tokens?.text?.primary || '#e0e0e0';
+        status.textContent = 'Connected';
+      }
+
+      if (msg.type === 'host:command-result' && pending.has(msg.reqId)) {
+        const { resolve, reject } = pending.get(msg.reqId);
+        pending.delete(msg.reqId);
+        if (msg.error) reject(new Error(msg.error));
+        else resolve(msg.result);
+      }
+    });
+
+    function executeCommand(command, args) {
+      const reqId = `req_${++reqCounter}`;
+      return new Promise((resolve, reject) => {
+        pending.set(reqId, { resolve, reject });
+        window.parent.postMessage({ type: 'plugin:command', command, args, reqId }, '*');
+      });
+    }
+
+    // Announce ready
+    window.parent.postMessage({ type: 'plugin:ready' }, '*');
+
+    // Button handler
+    document.getElementById('run').addEventListener('click', async () => {
+      result.textContent = 'Running...';
+      try {
+        const res = await executeCommand('hello');
+        result.textContent = res?.message || 'Done!';
+      } catch (err) {
+        result.textContent = 'Error: ' + err.message;
+        result.style.color = '#f87171';
+      }
+    });
+  </script>
+</body>
+</html>

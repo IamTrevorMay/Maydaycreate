@@ -2,10 +2,11 @@ import React, { useState, useEffect } from 'react';
 import { useSyncStatus } from '../hooks/useSyncStatus.js';
 import { useIpc } from '../hooks/useIpc.js';
 import { QueueSummary } from '../components/QueueSummary.js';
+import { ConflictDiff } from '../components/ConflictDiff.js';
 import { c } from '../styles.js';
 
 export function SyncPage(): React.ReactElement {
-  const { status, queue, syncLog, runSync, flushQueue } = useSyncStatus();
+  const { status, queue, syncLog, conflicts, resolveConflict, runSync, flushQueue } = useSyncStatus();
   const ipc = useIpc();
   const [syncSourcePath, setSyncSourcePath] = useState('');
 
@@ -23,7 +24,7 @@ export function SyncPage(): React.ReactElement {
 
   return (
     <div style={{ padding: '20px 24px', display: 'flex', flexDirection: 'column', gap: 20 }}>
-      <h2 style={{ color: c.text.primary, fontSize: 16, fontWeight: 600 }}>Sync</h2>
+      <h2 style={{ color: c.text.primary, fontSize: 16, fontWeight: 600 }}>Adobe Sync</h2>
 
       {/* Sync source */}
       <Section title="Sync Source">
@@ -121,6 +122,26 @@ export function SyncPage(): React.ReactElement {
           </div>
         </Section>
       )}
+
+      {/* Conflicts */}
+      <Section title={`Conflicts${conflicts.length > 0 ? ` (${conflicts.length})` : ''}`}>
+        {conflicts.length === 0 ? (
+          <p style={{ color: c.text.secondary, fontSize: 12 }}>
+            No conflicts — everything is in sync.
+          </p>
+        ) : (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+            {conflicts.map(conflict => (
+              <ConflictDiff
+                key={conflict.relativePath}
+                conflict={conflict}
+                onKeepMine={() => resolveConflict(conflict.relativePath, 'keep-mine')}
+                onUseTheirs={() => resolveConflict(conflict.relativePath, 'use-theirs')}
+              />
+            ))}
+          </div>
+        )}
+      </Section>
     </div>
   );
 }

@@ -22,6 +22,7 @@ import { YouTubeSyncService } from './youtube/youtube-sync.js';
 import { PresetSyncService } from './preset-sync.js';
 import { StreamDeckSyncService } from './streamdeck-sync.js';
 import { initAutoUpdater, silentAutoUpdate } from './auto-updater.js';
+import { registerPluginScheme, registerPluginProtocolHandler } from './plugin-page-protocol.js';
 // Old Elgato SDK plugin installer — replaced by direct USB hardware control
 // import { installStreamDeckPlugin } from './stream-deck-installer.js';
 
@@ -91,6 +92,9 @@ if (!gotTheLock) {
   app.quit();
 }
 
+// Must register custom scheme before app is ready
+registerPluginScheme();
+
 let mainWindow: BrowserWindow | null = null;
 
 function createWindow(): BrowserWindow {
@@ -146,6 +150,9 @@ app.whenReady().then(async () => {
     const filePath = decodeURIComponent(request.url.replace('mayday-frame://', ''));
     callback({ path: filePath });
   });
+
+  // Register custom protocol for plugin UI pages (mayday-plugin://<plugin-id>/path)
+  registerPluginProtocolHandler();
 
   const config = loadConfig();
 

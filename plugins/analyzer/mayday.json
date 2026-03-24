@@ -1,0 +1,18 @@
+{
+  "id": "analyzer",
+  "name": "Analyzer",
+  "version": "0.1.0",
+  "description": "YouTube video effect analysis — detect edits, transitions, and effects from reference videos",
+  "main": "src/index.ts",
+  "permissions": ["ai", "media"],
+  "ui": {
+    "page": true,
+    "sidebarLabel": "Analyzer",
+    "sidebarOrder": 50
+  },
+  "marketplace": {
+    "category": "analysis",
+    "tags": ["youtube", "effects", "training", "reference"]
+  },
+  "targetApp": "premiere"
+}

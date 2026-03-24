@@ -1,0 +1,34 @@
+{
+  "id": "my-plugin",
+  "name": "My Plugin",
+  "version": "0.1.0",
+  "description": "A short description of what this plugin does",
+  "main": "src/index.ts",
+  "commands": [
+    {
+      "id": "hello",
+      "name": "Say Hello",
+      "description": "A sample command that reads the active sequence"
+    }
+  ],
+  "permissions": ["timeline"],
+  "config": {
+    "greeting": {
+      "type": "string",
+      "label": "Greeting Message",
+      "default": "Hello from my plugin!",
+      "description": "The message shown when the hello command runs"
+    }
+  },
+  "ui": {
+    "page": true,
+    "sidebarLabel": "My Plugin",
+    "sidebarOrder": 100,
+    "rendererEntry": "ui/index.html"
+  },
+  "marketplace": {
+    "category": "utility",
+    "tags": ["template", "example"]
+  },
+  "targetApp": "premiere"
+}

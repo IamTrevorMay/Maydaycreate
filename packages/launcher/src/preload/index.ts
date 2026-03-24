@@ -38,6 +38,9 @@ const mayday = {
     enable: (id: string): Promise<void> => ipcRenderer.invoke('plugins:enable', id),
     disable: (id: string): Promise<void> => ipcRenderer.invoke('plugins:disable', id),
     install: (sourcePath: string): Promise<unknown> => ipcRenderer.invoke('plugins:install', sourcePath),
+    getConfig: (id: string): Promise<Record<string, unknown>> => ipcRenderer.invoke('plugins:getConfig', id),
+    setConfigValue: (id: string, key: string, value: unknown): Promise<void> =>
+      ipcRenderer.invoke('plugins:setConfigValue', id, key, value),
     onChanged: (cb: (plugins: LauncherPluginInfo[]) => void) => {
       const handler = (_: unknown, plugins: LauncherPluginInfo[]) => cb(plugins);
       ipcRenderer.on('plugins:changed', handler);

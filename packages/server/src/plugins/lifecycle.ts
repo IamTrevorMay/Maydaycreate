@@ -196,6 +196,36 @@ export class PluginLifecycle {
     }));
   }
 
+  /** Get persisted config for a plugin (merges defaults from manifest) */
+  getPluginConfig(pluginId: string): Record<string, unknown> {
+    const entry = this.plugins.get(pluginId);
+    const stored = this.registry.getConfig(pluginId);
+    // Merge manifest defaults under stored values
+    if (entry?.manifest.config) {
+      const defaults: Record<string, unknown> = {};
+      for (const [key, schema] of Object.entries(entry.manifest.config)) {
+        defaults[key] = schema.default;
+      }
+      return { ...defaults, ...stored };
+    }
+    return stored;
+  }
+
+  /** Update a single config key for a plugin and notify the running instance */
+  setPluginConfigValue(pluginId: string, key: string, value: unknown): void {
+    const current = this.registry.getConfig(pluginId);
+    const updated = { ...current, [key]: value };
+    this.registry.setConfig(pluginId, updated);
+
+    // Update the live plugin context so the running plugin sees the change
+    const entry = this.plugins.get(pluginId);
+    if (entry?.context) {
+      (entry.context.config as Record<string, unknown>)[key] = value;
+    }
+
+    this.eventBus.emit('plugin:config-changed', 'lifecycle', { pluginId, key, value });
+  }
+
   /** Check if any .ts file under srcDir is newer than the given mtime */
   private anySrcNewer(srcDir: string, outMtime: number): boolean {
     try {

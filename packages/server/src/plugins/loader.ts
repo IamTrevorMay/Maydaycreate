@@ -19,7 +19,31 @@ const ManifestSchema = z.object({
     description: z.string().optional(),
     icon: z.string().optional(),
   })).optional(),
+  config: z.record(z.object({
+    type: z.enum(['string', 'number', 'boolean', 'select']),
+    label: z.string(),
+    default: z.unknown(),
+    options: z.array(z.object({ label: z.string(), value: z.union([z.string(), z.number()]) })).optional(),
+    description: z.string().optional(),
+  })).optional(),
   permissions: z.array(z.enum(['timeline', 'media', 'ai', 'effects', 'filesystem', 'network'])).optional(),
+  ui: z.object({
+    page: z.boolean().optional(),
+    sidebarLabel: z.string().optional(),
+    sidebarIcon: z.string().optional(),
+    sidebarOrder: z.number().optional(),
+    rendererEntry: z.string().optional(),
+  }).optional(),
+  marketplace: z.object({
+    category: z.enum(['editing', 'analysis', 'effects', 'automation', 'hardware', 'utility']).optional(),
+    tags: z.array(z.string()).optional(),
+    icon: z.string().optional(),
+    screenshots: z.array(z.string()).optional(),
+    homepage: z.string().optional(),
+    repository: z.string().optional(),
+  }).optional(),
+  dependencies: z.array(z.string()).optional(),
+  targetApp: z.enum(['premiere', 'davinci', 'any']).optional(),
 });
 
 export class PluginLoader {

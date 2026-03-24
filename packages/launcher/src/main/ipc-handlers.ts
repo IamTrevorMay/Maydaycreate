@@ -25,6 +25,37 @@ const ManifestSchema = z.object({
   description: z.string(),
   author: z.string().optional(),
   main: z.string().default('src/index.ts'),
+  commands: z.array(z.object({
+    id: z.string(),
+    name: z.string(),
+    description: z.string().optional(),
+    icon: z.string().optional(),
+  })).optional(),
+  config: z.record(z.object({
+    type: z.enum(['string', 'number', 'boolean', 'select']),
+    label: z.string(),
+    default: z.unknown(),
+    options: z.array(z.object({ label: z.string(), value: z.union([z.string(), z.number()]) })).optional(),
+    description: z.string().optional(),
+  })).optional(),
+  permissions: z.array(z.enum(['timeline', 'media', 'ai', 'effects', 'filesystem', 'network'])).optional(),
+  ui: z.object({
+    page: z.boolean().optional(),
+    sidebarLabel: z.string().optional(),
+    sidebarIcon: z.string().optional(),
+    sidebarOrder: z.number().optional(),
+    rendererEntry: z.string().optional(),
+  }).optional(),
+  marketplace: z.object({
+    category: z.enum(['editing', 'analysis', 'effects', 'automation', 'hardware', 'utility']).optional(),
+    tags: z.array(z.string()).optional(),
+    icon: z.string().optional(),
+    screenshots: z.array(z.string()).optional(),
+    homepage: z.string().optional(),
+    repository: z.string().optional(),
+  }).optional(),
+  dependencies: z.array(z.string()).optional(),
+  targetApp: z.enum(['premiere', 'davinci', 'any']).optional(),
 });
 
 let _syncEngine: import('@mayday/sync-engine').SyncEngine | null = null;
@@ -59,6 +90,18 @@ export function registerIpcHandlers(): void {
     const bridge = getServerBridge();
     if (!bridge) throw new Error('Server not running');
     await bridge.lifecycle.deactivatePlugin(id);
+  });
+
+  ipcMain.handle('plugins:getConfig', (_e, id: string) => {
+    const bridge = getServerBridge();
+    if (!bridge) throw new Error('Server not running');
+    return bridge.lifecycle.getPluginConfig(id);
+  });
+
+  ipcMain.handle('plugins:setConfigValue', (_e, id: string, key: string, value: unknown) => {
+    const bridge = getServerBridge();
+    if (!bridge) throw new Error('Server not running');
+    bridge.lifecycle.setPluginConfigValue(id, key, value);
   });
 
   ipcMain.handle('plugins:install', async (_e, sourcePath: string) => {

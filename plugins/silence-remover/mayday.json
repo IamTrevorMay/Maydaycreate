@@ -4,6 +4,11 @@
   "version": "0.1.0",
   "description": "Detect and remove silent regions from audio using AI-powered analysis",
   "main": "src/index.ts",
+  "marketplace": {
+    "category": "editing",
+    "tags": ["audio", "silence", "cleanup"]
+  },
+  "targetApp": "premiere",
   "commands": [
     {
       "id": "analyze",
