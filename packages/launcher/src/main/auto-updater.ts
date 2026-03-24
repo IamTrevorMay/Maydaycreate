@@ -298,23 +298,24 @@ export async function pushVersion(
       await runStep('git', ['commit', '-m', commitMsg], sourceRepoPath, win, 'Committing');
     }
 
-    // 2. Bump version
+    // 2. Bump version + sync lockfile
     sendProgress(win, { phase: 'Bumping version', message: 'Incrementing patch version…', pct: 16, done: false });
     publishedVersion = bumpVersion(sourceRepoPath);
-    sendProgress(win, { phase: 'Bumping version', message: `New version: v${publishedVersion}`, pct: 18, done: false });
+    sendProgress(win, { phase: 'Bumping version', message: `v${publishedVersion} — syncing lockfile…`, pct: 18, done: false });
+    await runStep('npm', ['install'], sourceRepoPath, win, 'Bumping version');
 
-    // Commit version bump
+    // Commit version bump (includes updated lockfile)
     await runStep('git', ['add', '-A'], sourceRepoPath, win, 'Bumping version');
     await runStep('git', ['commit', '-m', `v${publishedVersion}`], sourceRepoPath, win, 'Bumping version');
 
     // 3. Push to origin
-    sendProgress(win, { phase: 'Pushing to origin', message: 'Running git push origin main…', pct: 22, done: false });
+    sendProgress(win, { phase: 'Pushing to origin', message: 'Running git push origin main…', pct: 24, done: false });
     await runStep('git', ['push', 'origin', 'main'], sourceRepoPath, win, 'Pushing to origin');
 
     commitHash = (await runCommand('git', ['rev-parse', '--short', 'HEAD'], sourceRepoPath)).trim();
 
     // 4. Build workspace
-    sendProgress(win, { phase: 'Building application', message: 'npm run build…', pct: 30, done: false });
+    sendProgress(win, { phase: 'Building application', message: 'npm run build…', pct: 35, done: false });
     await runStep('npm', ['run', 'build'], sourceRepoPath, win, 'Building application');
 
     // 5a. Build only (no publish) via electron-builder
