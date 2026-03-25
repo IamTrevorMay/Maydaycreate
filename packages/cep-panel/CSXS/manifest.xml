@@ -1,9 +1,9 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<ExtensionManifest Version="12.0" ExtensionBundleId="com.mayday.create" ExtensionBundleVersion="0.1.0" ExtensionBundleName="Mayday Create">
+<ExtensionManifest Version="12.0" ExtensionBundleId="com.mayday.create" ExtensionBundleVersion="1.0.14" ExtensionBundleName="Mayday Create">
   <ExtensionList>
-    <Extension Id="com.mayday.create.panel" Version="0.1.0" />
-    <Extension Id="com.mayday.create.training" Version="0.1.0" />
-    <Extension Id="com.mayday.create.streamdeck" Version="0.1.0" />
+    <Extension Id="com.mayday.create.panel" Version="1.0.14" />
+    <Extension Id="com.mayday.create.training" Version="1.0.14" />
+    <Extension Id="com.mayday.create.streamdeck" Version="1.0.14" />
   </ExtensionList>
 
   <ExecutionEnvironment>

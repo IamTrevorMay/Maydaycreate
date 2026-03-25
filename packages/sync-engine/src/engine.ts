@@ -211,6 +211,17 @@ export class SyncEngine {
           d.relativePath = `${source.name}/${d.relativePath}`;
         }
 
+        // Mark successfully synced files as up-to-date so pending count is accurate
+        const pushedSet = new Set(mergeResult.pushed);
+        const pulledSet = new Set(mergeResult.pulled);
+        for (const d of diffs) {
+          if ((d.state === 'needs-push' || d.state === 'local-only') && pushedSet.has(d.relativePath)) {
+            d.state = 'up-to-date';
+          } else if ((d.state === 'needs-pull' || d.state === 'remote-only') && pulledSet.has(d.relativePath)) {
+            d.state = 'up-to-date';
+          }
+        }
+
         totalPushed += mergeResult.pushed.length;
         totalPulled += mergeResult.pulled.length;
         totalConflicts += conflicts.length;

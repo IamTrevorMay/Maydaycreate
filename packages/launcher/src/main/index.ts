@@ -16,7 +16,7 @@ import {
   bridgePluginEvents,
 } from './ipc-handlers.js';
 import { createTray } from './tray.js';
-import { SyncEngine } from '@mayday/sync-engine';
+import { SyncEngine, SyncWatcher } from '@mayday/sync-engine';
 import type { SyncSource } from '@mayday/sync-engine';
 import { YouTubeAnalyzer } from './youtube/youtube-analyzer.js';
 import { YouTubeSyncService } from './youtube/youtube-sync.js';
@@ -256,11 +256,17 @@ app.whenReady().then(async () => {
   });
   streamDeckSync.startPeriodicSync();
 
-  // If sync source is configured, start a sync
+  // If sync source is configured, start a sync and watch for remote changes
   if (config.syncSourcePath) {
     syncEngine.runSync().catch(err => {
       console.error('[Launcher] Initial sync failed:', err);
     });
+
+    const syncWatcher = new SyncWatcher({
+      syncSourcePath: config.syncSourcePath,
+      engine: syncEngine,
+    });
+    syncWatcher.start();
   }
 
   // Old Elgato SDK plugin installer removed — now using direct USB hardware control
