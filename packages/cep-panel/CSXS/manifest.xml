@@ -93,7 +93,7 @@
         </Lifecycle>
         <UI>
           <Type>Panel</Type>
-          <Menu>Stream Deck</Menu>
+          <Menu>Mayday Shortcuts</Menu>
           <Geometry>
             <Size>
               <Width>400</Width>

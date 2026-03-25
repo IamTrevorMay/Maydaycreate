@@ -185,8 +185,11 @@ export class StreamDeckWorkerManager {
     await this.sendRequest('set-brightness', { brightness });
   }
 
-  async fillText(slot: number, label: string): Promise<void> {
-    await this.sendRequest('fill-text', { slot, label });
+  async fillText(slot: number, label: string, options?: {
+    bgR?: number; bgG?: number; bgB?: number;
+    fgR?: number; fgG?: number; fgB?: number;
+  }): Promise<void> {
+    await this.sendRequest('fill-text', { slot, label, ...options });
   }
 
   // ── Event subscription ──────────────────────────────────────────────────

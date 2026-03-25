@@ -1,6 +1,7 @@
 import express from 'express';
 import http from 'http';
 import path from 'path';
+import fs from 'fs';
 import { WebSocketServer, WebSocket } from 'ws';
 import { v4 as uuid } from 'uuid';
 import type { BridgeMessage, ServerStatusPayload } from '@mayday/types';
@@ -38,6 +39,25 @@ export async function startServer(config: ServerConfig) {
 
   const startTime = Date.now();
 
+  // ── Settings persistence ──────────────────────────────────────────────────
+  const settingsPath = path.join(config.dataDir, 'settings.json');
+  function loadSettings(): Record<string, any> {
+    try {
+      if (fs.existsSync(settingsPath)) return JSON.parse(fs.readFileSync(settingsPath, 'utf-8'));
+    } catch {}
+    return {};
+  }
+  function saveSettings(data: Record<string, any>): void {
+    try {
+      fs.mkdirSync(path.dirname(settingsPath), { recursive: true });
+      fs.writeFileSync(settingsPath, JSON.stringify(data, null, 2));
+    } catch (err) {
+      console.error('[Mayday] Failed to save settings:', err);
+    }
+  }
+  const settings = loadSettings();
+  let autoDismissMs: number = typeof settings.autoDismissMs === 'number' ? settings.autoDismissMs : 8000;
+
   // Core services
   const eventBus = new EventBus();
   const bridge = new BridgeHandler();
@@ -63,6 +83,9 @@ export async function startServer(config: ServerConfig) {
     if (event.source === 'panel') return;
 
     pendingBoostRecordId = data.recordId;
+
+    // Notify hardware of new feedback request for training mode
+    streamDeckHardware.onNewFeedbackRequest(data.recordId);
 
     hotkeyService.setActive(() => {
       if (pendingBoostRecordId == null) return;
@@ -172,6 +195,47 @@ export async function startServer(config: ServerConfig) {
   const streamDeckHardware = new StreamDeckHardwareService(streamDeckConfig, bridge, streamDeckWorkerManager);
   streamDeckHardware.start().catch(err => {
     console.error('[StreamDeck] Hardware start error:', err);
+  });
+
+  // ── Training mode state + hardware callback ──────────────────────────────
+  streamDeckHardware.setTrainingActionHandler((action) => {
+    if (action.type === 'toggle-tag') {
+      const { tags, tagId } = action.payload;
+      // Emit tag state to cutting-board plugin
+      eventBus.emit('plugin:cutting-board:set-tags', 'hardware', {
+        recordId: streamDeckHardware.getTrainingRecordId(),
+        tags,
+      });
+      broadcastToAllPanels({
+        id: uuid(),
+        type: 'streamdeck:training-state' as import('@mayday/types').BridgeMessageType,
+        payload: { tags, recordId: streamDeckHardware.getTrainingRecordId() },
+        timestamp: Date.now(),
+      });
+    } else if (action.type === 'submit') {
+      const { tags, recordId } = action.payload;
+      // Send final tags then clear
+      if (recordId != null && tags.length > 0) {
+        eventBus.emit('plugin:cutting-board:set-tags', 'hardware', { recordId, tags });
+      }
+      broadcastToAllPanels({
+        id: uuid(),
+        type: 'streamdeck:training-state' as import('@mayday/types').BridgeMessageType,
+        payload: { tags: [], recordId: null },
+        timestamp: Date.now(),
+      });
+    } else if (action.type === 'clear') {
+      eventBus.emit('plugin:cutting-board:set-tags', 'hardware', {
+        recordId: streamDeckHardware.getTrainingRecordId(),
+        tags: [],
+      });
+      broadcastToAllPanels({
+        id: uuid(),
+        type: 'streamdeck:training-state' as import('@mayday/types').BridgeMessageType,
+        payload: { tags: [], recordId: streamDeckHardware.getTrainingRecordId() },
+        timestamp: Date.now(),
+      });
+    }
   });
 
   app.get('/api/streamdeck/config', (_req, res) => {
@@ -383,6 +447,44 @@ Be concise, friendly, and focused on actionable editing advice. Reference the sp
           return;
         }
 
+        if (message.type === 'streamdeck:disconnect') {
+          try {
+            const status = await streamDeckHardware.disconnect();
+            ws.send(JSON.stringify({
+              id: uuid(),
+              type: 'streamdeck:status-data',
+              payload: status,
+              timestamp: Date.now(),
+            }));
+          } catch (err) {
+            console.error('[StreamDeck] Disconnect error:', err);
+          }
+          return;
+        }
+
+        if (message.type === 'streamdeck:reconnect') {
+          try {
+            await streamDeckHardware.reconnect();
+            // Small delay for device to settle before reporting status
+            await new Promise(r => setTimeout(r, 1000));
+            ws.send(JSON.stringify({
+              id: uuid(),
+              type: 'streamdeck:status-data',
+              payload: streamDeckHardware.getStatus(),
+              timestamp: Date.now(),
+            }));
+          } catch (err) {
+            console.error('[StreamDeck] Reconnect error:', err);
+            ws.send(JSON.stringify({
+              id: uuid(),
+              type: 'streamdeck:status-data',
+              payload: streamDeckHardware.getStatus(),
+              timestamp: Date.now(),
+            }));
+          }
+          return;
+        }
+
         if (message.type === 'streamdeck:get-models') {
           ws.send(JSON.stringify({
             id: uuid(),
@@ -441,6 +543,114 @@ Be concise, friendly, and focused on actionable editing advice. Reference the sp
           } catch (err) {
             console.error('[StreamDeck] Set model error:', err);
           }
+          return;
+        }
+
+        // ── Training mode ──────────────────────────────────────────────────
+        if (message.type === 'streamdeck:set-mode') {
+          const { mode } = message.payload as { mode: 'editing' | 'training' };
+          streamDeckHardware.setMode(mode);
+          // Clear training tags on mode switch
+          streamDeckHardware.updateTrainingTags([]);
+          broadcastToAllPanels({
+            id: uuid(),
+            type: 'streamdeck:mode-changed' as import('@mayday/types').BridgeMessageType,
+            payload: { mode },
+            timestamp: Date.now(),
+          });
+          return;
+        }
+
+        if (message.type === 'streamdeck:get-mode') {
+          ws.send(JSON.stringify({
+            id: uuid(),
+            type: 'streamdeck:mode-data',
+            payload: {
+              mode: streamDeckHardware.getMode(),
+              tags: streamDeckHardware.getTrainingTags(),
+              recordId: streamDeckHardware.getTrainingRecordId(),
+            },
+            timestamp: Date.now(),
+          }));
+          return;
+        }
+
+        if (message.type === 'streamdeck:training-toggle-tag') {
+          const { tagId, action } = message.payload as { tagId?: string; action?: string };
+
+          if (action === 'submit') {
+            const tags = streamDeckHardware.getTrainingTags();
+            const recordId = streamDeckHardware.getTrainingRecordId();
+            if (recordId != null && tags.length > 0) {
+              eventBus.emit('plugin:cutting-board:set-tags', 'panel', { recordId, tags });
+            }
+            streamDeckHardware.updateTrainingTags([]);
+            broadcastToAllPanels({
+              id: uuid(),
+              type: 'streamdeck:training-state' as import('@mayday/types').BridgeMessageType,
+              payload: { tags: [], recordId: null },
+              timestamp: Date.now(),
+            });
+            return;
+          }
+
+          if (action === 'clear') {
+            streamDeckHardware.updateTrainingTags([]);
+            eventBus.emit('plugin:cutting-board:set-tags', 'panel', {
+              recordId: streamDeckHardware.getTrainingRecordId(),
+              tags: [],
+            });
+            broadcastToAllPanels({
+              id: uuid(),
+              type: 'streamdeck:training-state' as import('@mayday/types').BridgeMessageType,
+              payload: { tags: [], recordId: streamDeckHardware.getTrainingRecordId() },
+              timestamp: Date.now(),
+            });
+            return;
+          }
+
+          if (tagId) {
+            const currentTags = streamDeckHardware.getTrainingTags();
+            const newTags = currentTags.includes(tagId)
+              ? currentTags.filter(t => t !== tagId)
+              : [...currentTags, tagId];
+            streamDeckHardware.updateTrainingTags(newTags);
+            eventBus.emit('plugin:cutting-board:set-tags', 'panel', {
+              recordId: streamDeckHardware.getTrainingRecordId(),
+              tags: newTags,
+            });
+            broadcastToAllPanels({
+              id: uuid(),
+              type: 'streamdeck:training-state' as import('@mayday/types').BridgeMessageType,
+              payload: { tags: newTags, recordId: streamDeckHardware.getTrainingRecordId() },
+              timestamp: Date.now(),
+            });
+          }
+          return;
+        }
+
+        // ── Auto-dismiss timer ──────────────────────────────────────────────
+        if (message.type === 'cutting-board:get-auto-dismiss') {
+          ws.send(JSON.stringify({
+            id: uuid(),
+            type: 'cutting-board:auto-dismiss-data',
+            payload: { ms: autoDismissMs },
+            timestamp: Date.now(),
+          }));
+          return;
+        }
+
+        if (message.type === 'cutting-board:set-auto-dismiss') {
+          const { ms } = message.payload as { ms: number };
+          autoDismissMs = Math.max(1000, Math.min(10000, ms));
+          settings.autoDismissMs = autoDismissMs;
+          saveSettings(settings);
+          broadcastToAllPanels({
+            id: uuid(),
+            type: 'cutting-board:auto-dismiss-data' as import('@mayday/types').BridgeMessageType,
+            payload: { ms: autoDismissMs },
+            timestamp: Date.now(),
+          });
           return;
         }
 

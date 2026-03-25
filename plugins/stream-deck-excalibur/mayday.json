@@ -1,8 +1,8 @@
 {
   "id": "stream-deck-excalibur",
-  "name": "Stream Deck & Excalibur",
+  "name": "Mayday Shortcuts",
   "version": "0.1.0",
-  "description": "Stream Deck hardware integration with Excalibur preset execution and button assignment",
+  "description": "Mayday Shortcuts hardware integration with Excalibur preset execution and button assignment",
   "main": "src/index.ts",
   "permissions": ["effects", "timeline"],
   "marketplace": {

@@ -16,8 +16,6 @@ interface CutFeedbackWidgetProps {
   send: (message: BridgeMessage) => void;
 }
 
-const AUTO_DISMISS_MS = 8000;
-
 function formatTimecode(seconds: number): string {
   const m = Math.floor(seconds / 60);
   const s = Math.floor(seconds % 60);
@@ -38,7 +36,23 @@ export function CutFeedbackWidget({ onMessage, send }: CutFeedbackWidgetProps) {
   const [queue, setQueue] = useState<FeedbackRequest[]>([]);
   const [current, setCurrent] = useState<FeedbackRequest | null>(null);
   const [appliedTags, setAppliedTags] = useState<string[]>([]);
+  const [autoDismissMs, setAutoDismissMs] = useState(8000);
   const dismissRef = useRef<ReturnType<typeof setTimeout>>();
+
+  // Fetch auto-dismiss setting on mount
+  useEffect(() => {
+    send({
+      id: crypto.randomUUID(),
+      type: 'cutting-board:get-auto-dismiss' as any,
+      payload: {},
+      timestamp: Date.now(),
+    });
+    const unsub = onMessage('cutting-board:auto-dismiss-data', (payload) => {
+      const data = payload as { ms: number };
+      setAutoDismissMs(data.ms);
+    });
+    return unsub;
+  }, [onMessage, send]);
 
   // Subscribe to feedback requests
   useEffect(() => {
@@ -65,9 +79,9 @@ export function CutFeedbackWidget({ onMessage, send }: CutFeedbackWidgetProps) {
     clearTimeout(dismissRef.current);
     dismissRef.current = setTimeout(() => {
       setCurrent(null);
-    }, AUTO_DISMISS_MS);
+    }, autoDismissMs);
     return () => clearTimeout(dismissRef.current);
-  }, [current, appliedTags]);
+  }, [current, appliedTags, autoDismissMs]);
 
   const toggleTag = useCallback((tagId: string) => {
     if (!current) return;
@@ -82,6 +96,18 @@ export function CutFeedbackWidget({ onMessage, send }: CutFeedbackWidgetProps) {
       timestamp: Date.now(),
     });
   }, [current, appliedTags, send]);
+
+  const handleSliderChange = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
+    const seconds = Number(e.target.value);
+    const ms = seconds * 1000;
+    setAutoDismissMs(ms);
+    send({
+      id: crypto.randomUUID(),
+      type: 'cutting-board:set-auto-dismiss' as any,
+      payload: { ms },
+      timestamp: Date.now(),
+    });
+  }, [send]);
 
   if (!current) return null;
 
@@ -169,6 +195,30 @@ export function CutFeedbackWidget({ onMessage, send }: CutFeedbackWidgetProps) {
               </button>
             );
           })}
+        </div>
+      )}
+
+      {/* Auto-submit timer slider */}
+      {!isUndo && (
+        <div style={{
+          display: 'flex',
+          alignItems: 'center',
+          gap: 6,
+          marginTop: 5,
+          fontSize: 10,
+          color: '#666',
+        }}>
+          <span>Auto-submit:</span>
+          <input
+            type="range"
+            min={1}
+            max={10}
+            step={0.5}
+            value={autoDismissMs / 1000}
+            onChange={handleSliderChange}
+            style={{ flex: 1, height: 4, cursor: 'pointer' }}
+          />
+          <span style={{ minWidth: 24, textAlign: 'right' }}>{(autoDismissMs / 1000).toFixed(1)}s</span>
         </div>
       )}
     </div>

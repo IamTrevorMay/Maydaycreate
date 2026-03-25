@@ -1,7 +1,7 @@
 import { definePlugin } from '@mayday/sdk';
 
 /**
- * Stream Deck & Excalibur plugin.
+ * Mayday Shortcuts plugin.
  *
  * Hardware integration is currently handled by the server's built-in services:
  *   - packages/server/src/services/streamdeck-hardware.ts (USB HID polling)
@@ -15,6 +15,6 @@ import { definePlugin } from '@mayday/sdk';
  */
 export default definePlugin({
   async activate(ctx) {
-    ctx.log.info('Stream Deck & Excalibur plugin activated (services hosted in server core)');
+    ctx.log.info('Mayday Shortcuts plugin activated (services hosted in server core)');
   },
 });
