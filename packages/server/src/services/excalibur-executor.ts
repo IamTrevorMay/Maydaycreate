@@ -291,6 +291,41 @@ export async function executeExcaliburCommand(
         } else {
           results.push(`No value for ${propName}`);
         }
+      } else if (subMenu?.selected === 'calc') {
+        // Calculated value — Excalibur pre-computes the target value (e.g., "Scale +20%" → value=120)
+        const propName = cmdName;
+        const value = subMenu.value != null ? parseFloat(subMenu.value) : null;
+        const valueX = subMenu.valuex != null ? parseFloat(subMenu.valuex) : null;
+        const valueY = subMenu.valuey != null ? parseFloat(subMenu.valuey) : null;
+
+        const propDef: any = { displayName: propName, value: null };
+
+        if (valueX != null && valueY != null) {
+          propDef.value = [valueX, valueY];
+          propDef.pixelValues = true;
+        } else if (value != null) {
+          propDef.value = value;
+        }
+
+        if (propDef.value != null) {
+          const effectsDef = [{
+            displayName: 'Motion',
+            isIntrinsic: true,
+            properties: [propDef],
+          }];
+
+          if (propName === 'Volume' || propName === 'Level') {
+            effectsDef[0].displayName = 'Volume';
+          }
+
+          const result = await bridge.callExtendScript('effects.applyEffects', [
+            clipInfo.trackIndex, clipInfo.clipIndex, clipInfo.trackType,
+            JSON.stringify(effectsDef),
+          ], { priority: true });
+          results.push(`Calc ${propName} → ${value}: ${JSON.stringify(result)}`);
+        } else {
+          results.push(`No value for calc ${propName}`);
+        }
       } else if (subMenu?.selected === 'atclips') {
         const presetData = presets?.['ap']?.[cmdName] ?? presets?.['vp']?.[cmdName];
         if (presetData) {
