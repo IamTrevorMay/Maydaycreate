@@ -320,6 +320,19 @@ var MaydayTimeline = (function () {
         };
     }
 
+    function nestSelection() {
+        var seq = app.project.activeSequence;
+        if (!seq) return false;
+
+        // Premiere's built-in nest command for the current selection
+        try {
+            var result = seq.createSubsequenceFromSelection();
+            return result ? true : false;
+        } catch (e) {
+            return false;
+        }
+    }
+
     return {
         getActiveSequence: getActiveSequence,
         getClips: getClips,
@@ -334,6 +347,7 @@ var MaydayTimeline = (function () {
         liftClip: liftClip,
         setClipEnabled: setClipEnabled,
         getProjectBinItems: getProjectBinItems,
-        duplicateSequence: duplicateSequence
+        duplicateSequence: duplicateSequence,
+        nestSelection: nestSelection
     };
 })();

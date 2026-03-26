@@ -162,6 +162,25 @@ export async function startServer(config: ServerConfig) {
     }
   });
 
+  // ── Clip property capture (for auditing / diagnostics) ────────────────────
+
+  app.get('/api/clip/properties', async (_req, res) => {
+    try {
+      if (!bridge.isConnected()) {
+        res.status(503).json({ success: false, error: 'Premiere Pro not connected' });
+        return;
+      }
+      const capture = await bridge.callExtendScript('effects.captureFromSelected', [], { priority: true });
+      if (!capture) {
+        res.status(400).json({ success: false, error: 'No clip selected' });
+        return;
+      }
+      res.json({ success: true, capture });
+    } catch (err) {
+      res.status(500).json({ success: false, error: String(err) });
+    }
+  });
+
   // ── Excalibur Stream Deck integration ─────────────────────────────────────
 
   app.post('/api/excalibur/execute', async (req, res) => {

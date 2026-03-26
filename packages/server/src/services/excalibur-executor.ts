@@ -254,9 +254,15 @@ export async function executeExcaliburCommand(
 
     } else if (cmdID === 'fxcl.') {
       // Clip operation
-      if (cmdName === 'Nest Individual Clips' || cmdName === 'Nest') {
-        results.push(`Nest operation not yet supported via bridge`);
-      } else if (subMenu?.selected === 'set') {
+      if (subMenu?.selected === 'native') {
+        // Native Premiere Pro command — execute directly via ExtendScript
+        if (cmdName === 'Nest Individual Clips' || cmdName === 'Nest') {
+          const result = await bridge.callExtendScript('timeline.nestSelection', [], { priority: true });
+          results.push(`Nest: ${JSON.stringify(result)}`);
+        } else {
+          results.push(`Unknown native command: ${cmdName}`);
+        }
+      } else if (subMenu?.selected === 'set' || subMenu?.selected === 'calc') {
         const propName = cmdName;
         const value = subMenu.value != null ? parseFloat(subMenu.value) : null;
         const valueX = subMenu.valuex != null ? parseFloat(subMenu.valuex) : null;
@@ -265,7 +271,6 @@ export async function executeExcaliburCommand(
         const propDef: any = { displayName: propName, value: null };
 
         if (valueX != null && valueY != null) {
-          // 2D point property (e.g., Position) — already in pixel coordinates
           propDef.value = [valueX, valueY];
           propDef.pixelValues = true;
         } else if (value != null) {
@@ -273,58 +278,31 @@ export async function executeExcaliburCommand(
         }
 
         if (propDef.value != null) {
+          // Route to the correct intrinsic component based on property name
+          // Premiere's intrinsic components: Motion (0), Opacity (1), Time Remapping (2)
+          let componentName = 'Motion';
+          if (propName === 'Opacity' || propName === 'Blend Mode') {
+            componentName = 'Opacity';
+          } else if (propName === 'Volume' || propName === 'Level' || propName === 'Channel Volume') {
+            componentName = 'Volume';
+          } else if (propName === 'Speed' || propName === 'Time Remapping') {
+            componentName = 'Time Remapping';
+          }
+
           const effectsDef = [{
-            displayName: 'Motion',
+            displayName: componentName,
             isIntrinsic: true,
             properties: [propDef],
           }];
-
-          if (propName === 'Volume' || propName === 'Level') {
-            effectsDef[0].displayName = 'Volume';
-          }
 
           const result = await bridge.callExtendScript('effects.applyEffects', [
             clipInfo.trackIndex, clipInfo.clipIndex, clipInfo.trackType,
             JSON.stringify(effectsDef),
           ], { priority: true });
-          results.push(`Set ${propName}: ${JSON.stringify(result)}`);
+          const label = subMenu.selected === 'calc' ? `Calc ${propName} → ${value}` : `Set ${propName}`;
+          results.push(`${label}: ${JSON.stringify(result)}`);
         } else {
           results.push(`No value for ${propName}`);
-        }
-      } else if (subMenu?.selected === 'calc') {
-        // Calculated value — Excalibur pre-computes the target value (e.g., "Scale +20%" → value=120)
-        const propName = cmdName;
-        const value = subMenu.value != null ? parseFloat(subMenu.value) : null;
-        const valueX = subMenu.valuex != null ? parseFloat(subMenu.valuex) : null;
-        const valueY = subMenu.valuey != null ? parseFloat(subMenu.valuey) : null;
-
-        const propDef: any = { displayName: propName, value: null };
-
-        if (valueX != null && valueY != null) {
-          propDef.value = [valueX, valueY];
-          propDef.pixelValues = true;
-        } else if (value != null) {
-          propDef.value = value;
-        }
-
-        if (propDef.value != null) {
-          const effectsDef = [{
-            displayName: 'Motion',
-            isIntrinsic: true,
-            properties: [propDef],
-          }];
-
-          if (propName === 'Volume' || propName === 'Level') {
-            effectsDef[0].displayName = 'Volume';
-          }
-
-          const result = await bridge.callExtendScript('effects.applyEffects', [
-            clipInfo.trackIndex, clipInfo.clipIndex, clipInfo.trackType,
-            JSON.stringify(effectsDef),
-          ], { priority: true });
-          results.push(`Calc ${propName} → ${value}: ${JSON.stringify(result)}`);
-        } else {
-          results.push(`No value for calc ${propName}`);
         }
       } else if (subMenu?.selected === 'atclips') {
         const presetData = presets?.['ap']?.[cmdName] ?? presets?.['vp']?.[cmdName];

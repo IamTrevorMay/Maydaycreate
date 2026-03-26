@@ -168,14 +168,16 @@ var MaydayEffects = (function () {
                             );
                         } else if (propDef.value instanceof Array && propDef.value.length === 2 && seq) {
                             // 2D point property (Position, Anchor Point, etc.)
-                            // Values from Excalibur presets are normalized (0-1 range)
-                            // and need conversion to pixel coordinates.
-                            // Values from fxcl.+set are already in pixels (pixelValues flag).
+                            // Premiere's setValue() for 2D points expects normalized
+                            // values (0-1 range relative to sequence dimensions).
+                            // Values from Excalibur presets are already normalized.
+                            // Values from fxcl.+set are in pixel coordinates and
+                            // need conversion to normalized.
                             var x = propDef.value[0];
                             var y = propDef.value[1];
-                            if (!propDef.pixelValues) {
-                                x = x * seq.frameSizeHorizontal;
-                                y = y * seq.frameSizeVertical;
+                            if (propDef.pixelValues) {
+                                x = x / seq.frameSizeHorizontal;
+                                y = y / seq.frameSizeVertical;
                             }
                             prop.setValue([x, y], true);
                         } else if (typeof propDef.value === "boolean") {

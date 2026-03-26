@@ -340,7 +340,8 @@ export async function pushVersion(
       launcherDir,
       win,
       'Building release',
-      tokenEnv,
+      // Do NOT pass GH_TOKEN here — electron-builder ignores --publish never
+      // when a token is present and uploads duplicate assets with dot-named files
     );
 
     // 5b. Generate latest-mac.yml

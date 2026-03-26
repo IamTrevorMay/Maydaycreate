@@ -27,6 +27,16 @@ import { registerPluginScheme, registerPluginProtocolHandler } from './plugin-pa
 // Old Elgato SDK plugin installer — replaced by direct USB hardware control
 // import { installStreamDeckPlugin } from './stream-deck-installer.js';
 
+// Prevent EPIPE crashes when stdout/stderr pipe is closed (e.g., dev tooling restart)
+process.stdout?.on?.('error', (err: NodeJS.ErrnoException) => {
+  if (err.code === 'EPIPE') return;
+  throw err;
+});
+process.stderr?.on?.('error', (err: NodeJS.ErrnoException) => {
+  if (err.code === 'EPIPE') return;
+  throw err;
+});
+
 // Augment PATH for Dock-launched apps (they don't inherit shell PATH)
 if (app.isPackaged) {
   const extraPaths = ['/opt/homebrew/bin', '/usr/local/bin'];
