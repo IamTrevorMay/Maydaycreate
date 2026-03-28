@@ -64,7 +64,7 @@ export function StreamDeckApp() {
   }, [ws.send]);
 
   return (
-    <div style={{ padding: 8, height: '100vh', display: 'flex', flexDirection: 'column' }}>
+    <div style={{ padding: 8, height: '100vh', display: 'flex', flexDirection: 'column', overflow: 'visible' }}>
       <header style={{
         display: 'flex',
         alignItems: 'center',

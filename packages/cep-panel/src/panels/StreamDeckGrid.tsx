@@ -68,6 +68,8 @@ export function StreamDeckGrid({ connected, send, onMessage, mode }: Props) {
   const [trainingTags, setTrainingTags] = useState<string[]>([]);
   const dropdownRef = useRef<HTMLDivElement>(null);
   const customizeRef = useRef<HTMLDivElement>(null);
+  const activeButtonRef = useRef<HTMLDivElement>(null);
+  const [openUp, setOpenUp] = useState(false);
 
   // Request config, commands, and models on connect
   useEffect(() => {
@@ -88,6 +90,23 @@ export function StreamDeckGrid({ connected, send, onMessage, mode }: Props) {
     ];
     return () => unsubs.forEach(u => u());
   }, [onMessage]);
+
+  // Refresh commands every time a button is clicked (activeSlot changes)
+  useEffect(() => {
+    if (activeSlot !== null && connected) {
+      send({ id: crypto.randomUUID(), type: 'streamdeck:get-commands' as any, payload: {}, timestamp: Date.now() });
+    }
+  }, [activeSlot, connected, send]);
+
+  // Decide whether dropdown should open upward or downward
+  useEffect(() => {
+    if (activeSlot !== null && activeButtonRef.current) {
+      const rect = activeButtonRef.current.getBoundingClientRect();
+      const spaceBelow = window.innerHeight - rect.bottom;
+      const spaceAbove = rect.top;
+      setOpenUp(spaceBelow < 210 && spaceAbove > spaceBelow);
+    }
+  }, [activeSlot]);
 
   // Close dropdowns on outside click
   useEffect(() => {
@@ -413,7 +432,7 @@ export function StreamDeckGrid({ connected, send, onMessage, mode }: Props) {
 
   // ── Editing mode grid ──────────────────────────────────────────────────
   return (
-    <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: 8 }}>
+    <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: 8, overflow: 'visible' }}>
       {/* Model selector */}
       {Object.keys(models).length > 0 && (
         <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
@@ -437,7 +456,7 @@ export function StreamDeckGrid({ connected, send, onMessage, mode }: Props) {
       <div style={{
         display: 'grid',
         gridTemplateColumns: `repeat(${modelInfo.cols}, 1fr)`,
-        gap: 4, flex: 1,
+        gap: 4, flex: 1, overflow: 'visible',
       }}>
         {config.buttons.map((button) => {
           const isAssigned = button.macroId !== null;
@@ -450,6 +469,7 @@ export function StreamDeckGrid({ connected, send, onMessage, mode }: Props) {
           return (
             <div
               key={button.slot}
+              ref={activeSlot === button.slot ? activeButtonRef : undefined}
               style={{
                 position: 'relative',
                 display: 'flex', alignItems: 'center', justifyContent: 'center',
@@ -492,10 +512,15 @@ export function StreamDeckGrid({ connected, send, onMessage, mode }: Props) {
                 <div
                   ref={dropdownRef}
                   style={{
-                    position: 'absolute', top: '100%', left: 0, zIndex: 100,
+                    position: 'absolute',
+                    ...(openUp
+                      ? { bottom: '100%', marginBottom: 2 }
+                      : { top: '100%', marginTop: 2 }),
+                    left: 0,
+                    zIndex: 10000,
                     background: '#1e1e1e', border: '1px solid #444', borderRadius: 4,
                     minWidth: 160, maxHeight: 200, overflowY: 'auto',
-                    boxShadow: '0 4px 12px rgba(0,0,0,0.5)', marginTop: 2,
+                    boxShadow: '0 4px 12px rgba(0,0,0,0.5)',
                   }}
                   onClick={(e) => e.stopPropagation()}
                 >

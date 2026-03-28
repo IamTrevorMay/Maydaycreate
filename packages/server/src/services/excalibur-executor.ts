@@ -14,18 +14,15 @@ export interface ExcaliburResult {
   error?: string;
 }
 
-/**
- * Decode a Premiere Pro packed 64-bit color integer into ARGB (0-255 each).
- *
- * Premiere stores colors as 64-bit values with 16 bits per channel,
- * where the 8-bit color value occupies the upper byte of each 16-bit slot:
- *   Bits 63-48: Alpha (upper byte = alpha value)
- *   Bits 47-32: Red
- *   Bits 31-16: Green
- *   Bits 15-0:  Blue
- *
- * These values exceed Number.MAX_SAFE_INTEGER so we use BigInt for parsing.
- */
+interface ClipInfo {
+  trackIndex: number;
+  clipIndex: number;
+  trackType: string;
+  clipName: string;
+}
+
+// ── Color decoding ──────────────────────────────────────────────────────
+
 function decodePackedColor(packedStr: string): { a: number; r: number; g: number; b: number } | null {
   try {
     const big = BigInt(packedStr);
@@ -39,46 +36,18 @@ function decodePackedColor(packedStr: string): { a: number; r: number; g: number
   }
 }
 
-/**
- * Resolve the correct value for an Excalibur preset property.
- *
- * Excalibur's .presetaction.json stores values in two places:
- * - `CurrentValue`: sometimes correct, sometimes 0 or null
- * - `StartKeyframe`: always has the real value as "ticks,value,..."
- *
- * ParameterControlType (maps to After Effects PF_ParamType):
- *   0  = Layer reference — not settable
- *   1  = Integer (Seed, Edge Feather, Contrast, RGB values)
- *   2  = Float slider (Scale, Crop, Opacity, Blur Length)
- *   3  = Angle (Rotation, Direction, Skew Axis)
- *   4  = Boolean (Shadow Only, Monochrome, Clipping, etc.)
- *   5  = Color — settable via setColorValue(a, r, g, b)
- *   6  = 2D Point (Position, Anchor Point) — normalized x:y
- *   7  = Dropdown/enum (Film Size, Equalize, Operator, etc.)
- *   8  = Float slider (Lumetri: Temperature, Exposure, Shadows, etc.)
- *   9  = Curve/blob (base64) — not settable
- *   10 = Blob (base64) — not settable
- *   11 = Section toggle — UI-only collapse state, not settable
- *   12 = Internal boolean — not settable
- *   13 = Group start — UI-only, not settable
- *   14 = Group end — UI-only, not settable
- *   15 = Button — no data, not settable
- *   16 = Reserved boolean — not settable
- *   17 = Reserved — not settable
- *   18 = 3D Point — AE-only, not in Premiere
- */
+// ── Property value resolution ───────────────────────────────────────────
+
 function resolvePropertyValue(p: any): { value: any; colorARGB?: { a: number; r: number; g: number; b: number } } {
   const pct: number = p.ParameterControlType ?? -1;
   const cv = p.CurrentValue;
   const sk: string | undefined = typeof p.StartKeyframe === 'string' ? p.StartKeyframe : undefined;
   const name: string = p.Name ?? '';
 
-  // Types that are never settable (no data, binary blobs, UI-only, reserved)
   if ([0, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18].includes(pct)) {
     return { value: null };
   }
 
-  // Type 5: Color — decode packed int64 from StartKeyframe, use setColorValue() in ExtendScript
   if (pct === 5) {
     if (sk) {
       const parts = sk.split(',');
@@ -90,8 +59,6 @@ function resolvePropertyValue(p: any): { value: any; colorARGB?: { a: number; r:
     return { value: null };
   }
 
-  // Type 6: 2D Point (Position, Anchor Point)
-  // CurrentValue is always null; real value in StartKeyframe as "ticks,x:y,..."
   if (pct === 6) {
     if (sk) {
       const parts = sk.split(',');
@@ -105,8 +72,6 @@ function resolvePropertyValue(p: any): { value: any; colorARGB?: { a: number; r:
     return { value: null };
   }
 
-  // Types 2, 3, 8: Float/angle/slider
-  // CurrentValue is often 0 when the real value is in StartKeyframe
   if ([2, 3, 8].includes(pct)) {
     if (cv != null && cv !== 0) return { value: cv };
     if (sk) {
@@ -119,7 +84,6 @@ function resolvePropertyValue(p: any): { value: any; colorARGB?: { a: number; r:
     return { value: cv ?? null };
   }
 
-  // Type 1: Integer — CurrentValue is usually 0; real value in StartKeyframe
   if (pct === 1) {
     if (cv != null && cv !== 0) return { value: cv };
     if (sk) {
@@ -132,7 +96,6 @@ function resolvePropertyValue(p: any): { value: any; colorARGB?: { a: number; r:
     return { value: cv ?? null };
   }
 
-  // Type 4: Boolean — skip unnamed ("?"), resolve named booleans from StartKeyframe
   if (pct === 4) {
     if (!name || name === '?') return { value: null };
     if (sk) {
@@ -144,7 +107,6 @@ function resolvePropertyValue(p: any): { value: any; colorARGB?: { a: number; r:
     return { value: null };
   }
 
-  // Type 7: Dropdown/enum — integer index value
   if (pct === 7) {
     if (!name || name === '?') return { value: null };
     if (cv != null && cv !== 0) return { value: cv };
@@ -158,8 +120,6 @@ function resolvePropertyValue(p: any): { value: any; colorARGB?: { a: number; r:
     return { value: null };
   }
 
-  // Unknown/future PCT: attempt to use CurrentValue as fallback
-  // This ensures new Excalibur parameter types aren't silently dropped
   if (cv != null && cv !== 0) return { value: cv };
   if (sk) {
     const parts = sk.split(',');
@@ -171,6 +131,495 @@ function resolvePropertyValue(p: any): { value: any; colorARGB?: { a: number; r:
   return { value: cv ?? null };
 }
 
+// ── Preset → effect definition builder ──────────────────────────────────
+
+function buildEffectDefs(presetData: any): any[] {
+  const effects = Array.isArray(presetData) ? presetData : [presetData];
+  return effects.map((e: any) => ({
+    displayName: e.name,
+    matchName: e.matchName ?? '',
+    isIntrinsic: (e.matchName ?? '').indexOf('ADBE Motion') >= 0 ||
+                 (e.matchName ?? '').indexOf('ADBE Opacity') >= 0 ||
+                 (e.matchName ?? '').indexOf('ADBE Time Remapping') >= 0,
+    properties: (e.props ?? []).filter((p: any) => p.Name).map((p: any) => {
+      const resolved = resolvePropertyValue(p);
+      const entry: any = {
+        displayName: p.Name,
+        matchName: p.matchName ?? '',
+        value: resolved.value,
+        type: p.ParameterControlType ?? (typeof resolved.value === 'number' ? 2 : 1),
+        keyframes: null,
+      };
+      if (resolved.colorARGB) entry.colorARGB = resolved.colorARGB;
+      return entry;
+    }),
+  }));
+}
+
+// ── cmdID handlers ──────────────────────────────────────────────────────
+
+// Commands that need a selected clip
+const CLIP_REQUIRED = new Set(['fxvp.', 'fxap.', 'fxcl.', 'fxvf.', 'fxaf.', 'fxvt.', 'fxat.']);
+
+async function handleVideoPreset(
+  mod: any, bridge: BridgeHandler, presets: any, clipInfo: ClipInfo,
+): Promise<string> {
+  const cmdName = mod.cmdName ?? '';
+  const presetData = presets?.['vp']?.[cmdName];
+  if (!presetData) return `Preset "${cmdName}" not found in vp`;
+
+  const effectsDefs = buildEffectDefs(presetData);
+  const result = await bridge.callExtendScript('effects.applyEffects', [
+    clipInfo.trackIndex, clipInfo.clipIndex, clipInfo.trackType,
+    JSON.stringify(effectsDefs),
+  ], { priority: true });
+  return `Applied preset "${cmdName}": ${JSON.stringify(result)}`;
+}
+
+async function handleAudioPreset(
+  mod: any, bridge: BridgeHandler, presets: any, clipInfo: ClipInfo,
+): Promise<string> {
+  const cmdName = mod.cmdName ?? '';
+  const subMenu = mod.subMenu ?? {};
+
+  if (subMenu.selected === 'atclips') {
+    const presetData = presets?.['ap']?.[cmdName] ?? presets?.['vp']?.[cmdName];
+    if (!presetData) return `Preset "${cmdName}" not found`;
+
+    const effectsDefs = buildEffectDefs(presetData);
+    const result = await bridge.callExtendScript('effects.applyEffects', [
+      clipInfo.trackIndex, clipInfo.clipIndex, clipInfo.trackType,
+      JSON.stringify(effectsDefs),
+    ], { priority: true });
+    return `Applied audio preset "${cmdName}": ${JSON.stringify(result)}`;
+  }
+
+  const presetData = presets?.['ap']?.[cmdName];
+  if (!presetData) return `Audio preset "${cmdName}" not found`;
+
+  const effectsDefs = buildEffectDefs(presetData);
+  const result = await bridge.callExtendScript('effects.applyEffects', [
+    clipInfo.trackIndex, clipInfo.clipIndex, clipInfo.trackType,
+    JSON.stringify(effectsDefs),
+  ], { priority: true });
+  return `Applied audio preset "${cmdName}": ${JSON.stringify(result)}`;
+}
+
+async function handleClipProperty(
+  mod: any, bridge: BridgeHandler, presets: any, clipInfo: ClipInfo,
+): Promise<string> {
+  const cmdName = mod.cmdName ?? '';
+  const subMenu = mod.subMenu ?? {};
+
+  if (subMenu.selected === 'native') {
+    if (cmdName === 'Nest Individual Clips' || cmdName === 'Nest') {
+      const result = await bridge.callExtendScript('timeline.nestSelection', [], { priority: true });
+      return `Nest: ${JSON.stringify(result)}`;
+    }
+    return `Unknown native command: ${cmdName}`;
+  }
+
+  if (subMenu.selected === 'set' || subMenu.selected === 'calc') {
+    const propName = cmdName;
+    const value = subMenu.value != null ? parseFloat(subMenu.value) : null;
+    const valueX = subMenu.valuex != null ? parseFloat(subMenu.valuex) : null;
+    const valueY = subMenu.valuey != null ? parseFloat(subMenu.valuey) : null;
+
+    const propDef: any = { displayName: propName, value: null };
+
+    if (valueX != null && valueY != null) {
+      propDef.value = [valueX, valueY];
+      propDef.pixelValues = true;
+    } else if (value != null) {
+      propDef.value = value;
+    }
+
+    if (propDef.value != null) {
+      let componentName = 'Motion';
+      if (propName === 'Opacity' || propName === 'Blend Mode') {
+        componentName = 'Opacity';
+      } else if (propName === 'Volume' || propName === 'Level' || propName === 'Channel Volume') {
+        componentName = 'Volume';
+      } else if (propName === 'Speed' || propName === 'Time Remapping') {
+        componentName = 'Time Remapping';
+      }
+
+      const effectsDef = [{
+        displayName: componentName,
+        isIntrinsic: true,
+        properties: [propDef],
+      }];
+
+      const result = await bridge.callExtendScript('effects.applyEffects', [
+        clipInfo.trackIndex, clipInfo.clipIndex, clipInfo.trackType,
+        JSON.stringify(effectsDef),
+      ], { priority: true });
+      const label = subMenu.selected === 'calc' ? `Calc ${propName} → ${value}` : `Set ${propName}`;
+      return `${label}: ${JSON.stringify(result)}`;
+    }
+    return `No value for ${propName}`;
+  }
+
+  if (subMenu.selected === 'atclips') {
+    const presetData = presets?.['ap']?.[cmdName] ?? presets?.['vp']?.[cmdName];
+    if (!presetData) return `Preset "${cmdName}" not found`;
+
+    const effectsDefs = buildEffectDefs(presetData);
+    const result = await bridge.callExtendScript('effects.applyEffects', [
+      clipInfo.trackIndex, clipInfo.clipIndex, clipInfo.trackType,
+      JSON.stringify(effectsDefs),
+    ], { priority: true });
+    return `Applied "${cmdName}": ${JSON.stringify(result)}`;
+  }
+
+  return `Unknown fxcl operation: ${cmdName} (${JSON.stringify(subMenu)})`;
+}
+
+async function handleVideoFilter(
+  mod: any, bridge: BridgeHandler, presets: any, clipInfo: ClipInfo,
+): Promise<string> {
+  const effectName = mod.cmdName ?? '';
+
+  // Apply the effect via QE DOM
+  const result = await bridge.callExtendScript('effects.applyVideoFilter', [
+    clipInfo.trackIndex, clipInfo.clipIndex, clipInfo.trackType, effectName,
+  ], { priority: true });
+
+  // If preset property overrides exist, apply them
+  const presetData = presets?.['vf']?.[effectName];
+  if (presetData) {
+    const effectsDefs = buildEffectDefs(presetData);
+    await bridge.callExtendScript('effects.applyEffects', [
+      clipInfo.trackIndex, clipInfo.clipIndex, clipInfo.trackType,
+      JSON.stringify(effectsDefs),
+    ], { priority: true });
+  }
+
+  return `Applied video filter "${effectName}": ${JSON.stringify(result)}`;
+}
+
+async function handleAudioFilter(
+  mod: any, bridge: BridgeHandler, presets: any, clipInfo: ClipInfo,
+): Promise<string> {
+  const effectName = mod.cmdName ?? '';
+
+  const result = await bridge.callExtendScript('effects.applyAudioFilter', [
+    clipInfo.trackIndex, clipInfo.clipIndex, clipInfo.trackType, effectName,
+  ], { priority: true });
+
+  const presetData = presets?.['af']?.[effectName];
+  if (presetData) {
+    const effectsDefs = buildEffectDefs(presetData);
+    await bridge.callExtendScript('effects.applyEffects', [
+      clipInfo.trackIndex, clipInfo.clipIndex, clipInfo.trackType,
+      JSON.stringify(effectsDefs),
+    ], { priority: true });
+  }
+
+  return `Applied audio filter "${effectName}": ${JSON.stringify(result)}`;
+}
+
+async function handleVideoTransition(
+  mod: any, bridge: BridgeHandler, _presets: any, clipInfo: ClipInfo,
+): Promise<string> {
+  const transitionName = mod.cmdName ?? '';
+  const subMenu = mod.subMenu ?? {};
+  // Default: apply at end of clip (the cut point going to the next clip)
+  const atEnd = subMenu.position !== 'start';
+
+  const result = await bridge.callExtendScript('effects.applyVideoTransition', [
+    clipInfo.trackIndex, clipInfo.clipIndex, transitionName, atEnd,
+  ], { priority: true });
+  return `Applied video transition "${transitionName}": ${JSON.stringify(result)}`;
+}
+
+async function handleAudioTransition(
+  mod: any, bridge: BridgeHandler, _presets: any, clipInfo: ClipInfo,
+): Promise<string> {
+  const transitionName = mod.cmdName ?? '';
+  const subMenu = mod.subMenu ?? {};
+  const atEnd = subMenu.position !== 'start';
+
+  const result = await bridge.callExtendScript('effects.applyAudioTransition', [
+    clipInfo.trackIndex, clipInfo.clipIndex, transitionName, atEnd,
+  ], { priority: true });
+  return `Applied audio transition "${transitionName}": ${JSON.stringify(result)}`;
+}
+
+// ── Sequence operations (no clip required) ──────────────────────────────
+
+const SEQUENCE_OPS: Record<string, (bridge: BridgeHandler, mod: any) => Promise<string>> = {
+  'Open Sequence': async (bridge, mod) => {
+    const name = mod.subMenu?.value || mod.cmdName;
+    const result = await bridge.callExtendScript('sequence.openSequenceByName', [name], { priority: true });
+    return `Open Sequence: ${JSON.stringify(result)}`;
+  },
+  'Duplicate and Increment': async (bridge) => {
+    const result = await bridge.callExtendScript('sequence.duplicateAndIncrement', [], { priority: true });
+    return `Duplicate: ${JSON.stringify(result)}`;
+  },
+  'Add Marker to Sequence': async (bridge, mod) => {
+    const name = mod.subMenu?.value || '';
+    const color = mod.subMenu?.color ? parseInt(mod.subMenu.color, 10) : 0;
+    const result = await bridge.callExtendScript('sequence.addMarkerAtPlayhead', [name, color], { priority: true });
+    return `Add Marker: ${JSON.stringify(result)}`;
+  },
+  'Add Marker': async (bridge, mod) => {
+    const name = mod.subMenu?.value || '';
+    const color = mod.subMenu?.color ? parseInt(mod.subMenu.color, 10) : 0;
+    const result = await bridge.callExtendScript('sequence.addMarkerAtPlayhead', [name, color], { priority: true });
+    return `Add Marker: ${JSON.stringify(result)}`;
+  },
+  'Razor at Playhead': async (bridge) => {
+    const result = await bridge.callExtendScript('sequence.razorAtPlayhead', [], { priority: true });
+    return `Razor: ${JSON.stringify(result)}`;
+  },
+  'Razor': async (bridge) => {
+    const result = await bridge.callExtendScript('sequence.razorAtPlayhead', [], { priority: true });
+    return `Razor: ${JSON.stringify(result)}`;
+  },
+  'Set In Point': async (bridge) => {
+    const result = await bridge.callExtendScript('sequence.setInPoint', [], { priority: true });
+    return `Set In: ${JSON.stringify(result)}`;
+  },
+  'Set Out Point': async (bridge) => {
+    const result = await bridge.callExtendScript('sequence.setOutPoint', [], { priority: true });
+    return `Set Out: ${JSON.stringify(result)}`;
+  },
+  'Clear In/Out': async (bridge) => {
+    const result = await bridge.callExtendScript('sequence.clearInOut', [], { priority: true });
+    return `Clear In/Out: ${JSON.stringify(result)}`;
+  },
+  'Clear In and Out': async (bridge) => {
+    const result = await bridge.callExtendScript('sequence.clearInOut', [], { priority: true });
+    return `Clear In/Out: ${JSON.stringify(result)}`;
+  },
+  'Go to In Point': async (bridge) => {
+    const result = await bridge.callExtendScript('sequence.goToInPoint', [], { priority: true });
+    return `Go to In: ${JSON.stringify(result)}`;
+  },
+  'Go to Out Point': async (bridge) => {
+    const result = await bridge.callExtendScript('sequence.goToOutPoint', [], { priority: true });
+    return `Go to Out: ${JSON.stringify(result)}`;
+  },
+  'Lift': async (bridge) => {
+    const result = await bridge.callExtendScript('sequence.liftSelection', [], { priority: true });
+    return `Lift: ${JSON.stringify(result)}`;
+  },
+  'Extract': async (bridge) => {
+    const result = await bridge.callExtendScript('sequence.extractSelection', [], { priority: true });
+    return `Extract: ${JSON.stringify(result)}`;
+  },
+  'Render In to Out': async (bridge) => {
+    const result = await bridge.callExtendScript('sequence.renderInToOut', [], { priority: true });
+    return `Render: ${JSON.stringify(result)}`;
+  },
+  'Render Preview': async (bridge) => {
+    const result = await bridge.callExtendScript('sequence.renderInToOut', [], { priority: true });
+    return `Render: ${JSON.stringify(result)}`;
+  },
+  'Zoom to Sequence': async (bridge) => {
+    const result = await bridge.callExtendScript('sequence.zoomToSequence', [], { priority: true });
+    return `Zoom: ${JSON.stringify(result)}`;
+  },
+  'Select All': async (bridge) => {
+    const result = await bridge.callExtendScript('sequence.selectAll', [], { priority: true });
+    return `Select All: ${JSON.stringify(result)}`;
+  },
+  'Deselect All': async (bridge) => {
+    const result = await bridge.callExtendScript('sequence.deselectAll', [], { priority: true });
+    return `Deselect All: ${JSON.stringify(result)}`;
+  },
+};
+
+async function handleSequenceOp(
+  mod: any, bridge: BridgeHandler,
+): Promise<string> {
+  const cmdName = mod.cmdName ?? '';
+  const handler = SEQUENCE_OPS[cmdName];
+  if (handler) {
+    return handler(bridge, mod);
+  }
+  // Fallback: try to execute as a generic Premiere command via the sequence module
+  // Some sequence operations use command IDs stored in subMenu
+  const commandId = mod.subMenu?.commandId;
+  if (commandId) {
+    const result = await bridge.callExtendScript('sequence.executeCommand', [parseInt(commandId, 10)], { priority: true });
+    return `Execute command ${commandId}: ${JSON.stringify(result)}`;
+  }
+  return `Unknown sequence operation: ${cmdName}`;
+}
+
+// ── Selection operations ────────────────────────────────────────────────
+
+const SELECTION_OPS: Record<string, (bridge: BridgeHandler) => Promise<string>> = {
+  'Select Clip Above': async (bridge) => {
+    const result = await bridge.callExtendScript('sequence.executeCommand', [41012], { priority: true });
+    return `Select Above: ${JSON.stringify(result)}`;
+  },
+  'Select Clip Below': async (bridge) => {
+    const result = await bridge.callExtendScript('sequence.executeCommand', [41013], { priority: true });
+    return `Select Below: ${JSON.stringify(result)}`;
+  },
+  'Extend Selection': async (bridge) => {
+    const result = await bridge.callExtendScript('sequence.executeCommand', [41161], { priority: true });
+    return `Extend Selection: ${JSON.stringify(result)}`;
+  },
+  'Extend Selection Up': async (bridge) => {
+    const result = await bridge.callExtendScript('sequence.executeCommand', [41159], { priority: true });
+    return `Extend Up: ${JSON.stringify(result)}`;
+  },
+  'Extend Selection Down': async (bridge) => {
+    const result = await bridge.callExtendScript('sequence.executeCommand', [41160], { priority: true });
+    return `Extend Down: ${JSON.stringify(result)}`;
+  },
+  'Select All': async (bridge) => {
+    const result = await bridge.callExtendScript('sequence.selectAll', [], { priority: true });
+    return `Select All: ${JSON.stringify(result)}`;
+  },
+  'Deselect All': async (bridge) => {
+    const result = await bridge.callExtendScript('sequence.deselectAll', [], { priority: true });
+    return `Deselect All: ${JSON.stringify(result)}`;
+  },
+};
+
+async function handleSelectionOp(
+  mod: any, bridge: BridgeHandler,
+): Promise<string> {
+  const cmdName = mod.cmdName ?? '';
+  const handler = SELECTION_OPS[cmdName];
+  if (handler) return handler(bridge);
+
+  const commandId = mod.subMenu?.commandId;
+  if (commandId) {
+    const result = await bridge.callExtendScript('sequence.executeCommand', [parseInt(commandId, 10)], { priority: true });
+    return `Selection command ${commandId}: ${JSON.stringify(result)}`;
+  }
+  return `Unknown selection operation: ${cmdName}`;
+}
+
+// ── Export operations ───────────────────────────────────────────────────
+
+const EXPORT_OPS: Record<string, (bridge: BridgeHandler, mod: any) => Promise<string>> = {
+  'Export Media': async (bridge) => {
+    const result = await bridge.callExtendScript('exports.exportMedia', [], { priority: true });
+    return `Export Media: ${JSON.stringify(result)}`;
+  },
+  'Export Selected Clips': async (bridge) => {
+    const result = await bridge.callExtendScript('exports.exportSelectedClips', [], { priority: true });
+    return `Export Selected: ${JSON.stringify(result)}`;
+  },
+  'Export Frame': async (bridge) => {
+    const result = await bridge.callExtendScript('exports.exportFrame', [], { priority: true });
+    return `Export Frame: ${JSON.stringify(result)}`;
+  },
+  'Export Frame as JPEG': async (bridge) => {
+    const result = await bridge.callExtendScript('exports.exportFrameJPEG', [], { priority: true });
+    return `Export JPEG: ${JSON.stringify(result)}`;
+  },
+};
+
+async function handleExportOp(
+  mod: any, bridge: BridgeHandler,
+): Promise<string> {
+  const cmdName = mod.cmdName ?? '';
+  const handler = EXPORT_OPS[cmdName];
+  if (handler) return handler(bridge, mod);
+  return `Unknown export operation: ${cmdName}`;
+}
+
+// ── Project operations ──────────────────────────────────────────────────
+
+const PROJECT_OPS: Record<string, (bridge: BridgeHandler, mod: any) => Promise<string>> = {
+  'Increment and Save': async (bridge) => {
+    const result = await bridge.callExtendScript('project.incrementAndSave', [], { priority: true });
+    return `Increment & Save: ${JSON.stringify(result)}`;
+  },
+  'Change Workspace': async (bridge, mod) => {
+    const workspace = mod.subMenu?.value || mod.cmdName;
+    const result = await bridge.callExtendScript('sequence.executeCommand', [41052], { priority: true });
+    return `Change Workspace "${workspace}": ${JSON.stringify(result)}`;
+  },
+  'Execute Script': async (bridge, mod) => {
+    const scriptPath = mod.subMenu?.value || '';
+    if (!scriptPath) return 'No script path specified';
+    // Safety: only execute scripts from the Excalibur scripts directory
+    const result = await bridge.callExtendScript('project.executeScript', [scriptPath], { priority: true });
+    return `Execute Script: ${JSON.stringify(result)}`;
+  },
+};
+
+async function handleProjectOp(
+  mod: any, bridge: BridgeHandler,
+): Promise<string> {
+  const cmdName = mod.cmdName ?? '';
+  const handler = PROJECT_OPS[cmdName];
+  if (handler) return handler(bridge, mod);
+  return `Unknown project operation: ${cmdName}`;
+}
+
+// ── Preferences toggles ────────────────────────────────────────────────
+
+async function handlePreferenceToggle(
+  mod: any, bridge: BridgeHandler,
+): Promise<string> {
+  const prefName = mod.cmdName ?? '';
+  const result = await bridge.callExtendScript('preferences.toggle', [prefName], { priority: true });
+  return `Toggle "${prefName}": ${JSON.stringify(result)}`;
+}
+
+// ── Special commands ────────────────────────────────────────────────────
+
+async function handleSpecialCommand(
+  mod: any, bridge: BridgeHandler,
+): Promise<string> {
+  const cmdName = mod.cmdName ?? '';
+  if (cmdName === 'Undo') {
+    const result = await bridge.callExtendScript('sequence.undo', [], { priority: true });
+    return `Undo: ${JSON.stringify(result)}`;
+  }
+  if (cmdName === 'Excalibur Settings') {
+    return 'Excalibur Settings is not applicable in Mayday';
+  }
+  return `Unknown special command: ${cmdName}`;
+}
+
+// ── Extension commands (not supported) ──────────────────────────────────
+
+async function handleExtensionCommand(
+  mod: any, _bridge: BridgeHandler,
+): Promise<string> {
+  const cmdName = mod.cmdName ?? '';
+  return `Extension command "${cmdName}" requires Excalibur's native panel and is not supported in Mayday`;
+}
+
+// ── Handler dispatch map ────────────────────────────────────────────────
+
+type ClipHandler = (mod: any, bridge: BridgeHandler, presets: any, clipInfo: ClipInfo) => Promise<string>;
+type NoClipHandler = (mod: any, bridge: BridgeHandler) => Promise<string>;
+
+const clipHandlers: Record<string, ClipHandler> = {
+  'fxvp.': handleVideoPreset,
+  'fxap.': handleAudioPreset,
+  'fxcl.': handleClipProperty,
+  'fxvf.': handleVideoFilter,
+  'fxaf.': handleAudioFilter,
+  'fxvt.': handleVideoTransition,
+  'fxat.': handleAudioTransition,
+};
+
+const noClipHandlers: Record<string, NoClipHandler> = {
+  'fxsq.': handleSequenceOp,
+  'fxsl.': handleSelectionOp,
+  'fxex.': handleExportOp,
+  'fxpr.': handleProjectOp,
+  'fxpf.': handlePreferenceToggle,
+  'fxsp.': handleSpecialCommand,
+  'fxmd.': handleExtensionCommand,
+};
+
+// ── Main executor ───────────────────────────────────────────────────────
+
 export async function executeExcaliburCommand(
   commandName: string,
   bridge: BridgeHandler,
@@ -179,7 +628,6 @@ export async function executeExcaliburCommand(
     return { success: false, error: 'Premiere Pro not connected. Open Premiere and the Mayday panel.' };
   }
 
-  // Read command definition
   const cmdlistPath = path.join(EXCALIBUR_DIR, '.cmdlist.json');
   const presetPath = path.join(EXCALIBUR_DIR, '.presetaction.json');
 
@@ -197,150 +645,51 @@ export async function executeExcaliburCommand(
     ? JSON.parse(fs.readFileSync(presetPath, 'utf-8'))
     : {};
 
-  // Find the selected clip (priority: skip ahead of polling)
-  const clipInfo = await bridge.callExtendScript('effects.getSelectedClipInfo', [], { priority: true }) as {
-    trackIndex: number; clipIndex: number; trackType: string; clipName: string;
-  } | null;
+  const modules = userCmd.modules ?? {};
+  if (Object.keys(modules).length === 0) {
+    return { success: true, results: ['Command has no modules'] };
+  }
 
-  if (!clipInfo) {
-    return { success: false, error: 'No clip selected in Premiere Pro' };
+  // Determine if any module needs a selected clip
+  let clipInfo: ClipInfo | null = null;
+  const needsClip = Object.values(modules).some((mod: any) => {
+    const cmdID = mod.cmdID ?? '';
+    return CLIP_REQUIRED.has(cmdID);
+  });
+
+  if (needsClip) {
+    clipInfo = await bridge.callExtendScript('effects.getSelectedClipInfo', [], { priority: true }) as ClipInfo | null;
+    if (!clipInfo) {
+      return { success: false, error: 'No clip selected in Premiere Pro' };
+    }
   }
 
   const results: string[] = [];
 
-  // Execute each module in the command
-  const modules = userCmd.modules ?? {};
   for (const [_modKey, mod] of Object.entries(modules) as Array<[string, any]>) {
     const cmdID: string = mod.cmdID ?? '';
-    const cmdName: string = mod.cmdName ?? '';
-    const subMenu: any = mod.subMenu ?? {};
 
-    if (cmdID === 'fxvp.' || cmdID === 'fxap.') {
-      // Apply video/audio preset
-      const presetCategory = cmdID === 'fxvp.' ? 'vp' : 'ap';
-      const presetData = presets?.[presetCategory]?.[cmdName];
-
-      if (!presetData) {
-        results.push(`Preset "${cmdName}" not found in ${presetCategory}`);
-        continue;
-      }
-
-      const effects = Array.isArray(presetData) ? presetData : [presetData];
-      const effectsDefs = effects.map((e: any) => ({
-        displayName: e.name,
-        matchName: e.matchName ?? '',
-        isIntrinsic: (e.matchName ?? '').indexOf('ADBE Motion') >= 0 ||
-                     (e.matchName ?? '').indexOf('ADBE Opacity') >= 0 ||
-                     (e.matchName ?? '').indexOf('ADBE Time Remapping') >= 0,
-        properties: (e.props ?? []).filter((p: any) => p.Name).map((p: any) => {
-          const resolved = resolvePropertyValue(p);
-          const entry: any = {
-            displayName: p.Name,
-            matchName: p.matchName ?? '',
-            value: resolved.value,
-            type: p.ParameterControlType ?? (typeof resolved.value === 'number' ? 2 : 1),
-            keyframes: null,
-          };
-          if (resolved.colorARGB) entry.colorARGB = resolved.colorARGB;
-          return entry;
-        }),
-      }));
-
-      const result = await bridge.callExtendScript('effects.applyEffects', [
-        clipInfo.trackIndex, clipInfo.clipIndex, clipInfo.trackType,
-        JSON.stringify(effectsDefs),
-      ], { priority: true });
-      results.push(`Applied preset "${cmdName}": ${JSON.stringify(result)}`);
-
-    } else if (cmdID === 'fxcl.') {
-      // Clip operation
-      if (subMenu?.selected === 'native') {
-        // Native Premiere Pro command — execute directly via ExtendScript
-        if (cmdName === 'Nest Individual Clips' || cmdName === 'Nest') {
-          const result = await bridge.callExtendScript('timeline.nestSelection', [], { priority: true });
-          results.push(`Nest: ${JSON.stringify(result)}`);
+    try {
+      if (clipHandlers[cmdID] && clipInfo) {
+        const result = await clipHandlers[cmdID](mod, bridge, presets, clipInfo);
+        results.push(result);
+      } else if (noClipHandlers[cmdID]) {
+        const result = await noClipHandlers[cmdID](mod, bridge);
+        results.push(result);
+      } else if (clipHandlers[cmdID] && !clipInfo) {
+        // Clip handler but no clip — try to get one now
+        const lateClipInfo = await bridge.callExtendScript('effects.getSelectedClipInfo', [], { priority: true }) as ClipInfo | null;
+        if (lateClipInfo) {
+          const result = await clipHandlers[cmdID](mod, bridge, presets, lateClipInfo);
+          results.push(result);
         } else {
-          results.push(`Unknown native command: ${cmdName}`);
-        }
-      } else if (subMenu?.selected === 'set' || subMenu?.selected === 'calc') {
-        const propName = cmdName;
-        const value = subMenu.value != null ? parseFloat(subMenu.value) : null;
-        const valueX = subMenu.valuex != null ? parseFloat(subMenu.valuex) : null;
-        const valueY = subMenu.valuey != null ? parseFloat(subMenu.valuey) : null;
-
-        const propDef: any = { displayName: propName, value: null };
-
-        if (valueX != null && valueY != null) {
-          propDef.value = [valueX, valueY];
-          propDef.pixelValues = true;
-        } else if (value != null) {
-          propDef.value = value;
-        }
-
-        if (propDef.value != null) {
-          // Route to the correct intrinsic component based on property name
-          // Premiere's intrinsic components: Motion (0), Opacity (1), Time Remapping (2)
-          let componentName = 'Motion';
-          if (propName === 'Opacity' || propName === 'Blend Mode') {
-            componentName = 'Opacity';
-          } else if (propName === 'Volume' || propName === 'Level' || propName === 'Channel Volume') {
-            componentName = 'Volume';
-          } else if (propName === 'Speed' || propName === 'Time Remapping') {
-            componentName = 'Time Remapping';
-          }
-
-          const effectsDef = [{
-            displayName: componentName,
-            isIntrinsic: true,
-            properties: [propDef],
-          }];
-
-          const result = await bridge.callExtendScript('effects.applyEffects', [
-            clipInfo.trackIndex, clipInfo.clipIndex, clipInfo.trackType,
-            JSON.stringify(effectsDef),
-          ], { priority: true });
-          const label = subMenu.selected === 'calc' ? `Calc ${propName} → ${value}` : `Set ${propName}`;
-          results.push(`${label}: ${JSON.stringify(result)}`);
-        } else {
-          results.push(`No value for ${propName}`);
-        }
-      } else if (subMenu?.selected === 'atclips') {
-        const presetData = presets?.['ap']?.[cmdName] ?? presets?.['vp']?.[cmdName];
-        if (presetData) {
-          const effects = Array.isArray(presetData) ? presetData : [presetData];
-          const effectsDefs = effects.map((e: any) => ({
-            displayName: e.name,
-            matchName: e.matchName ?? '',
-            isIntrinsic: (e.matchName ?? '').indexOf('ADBE Motion') >= 0 ||
-                         (e.matchName ?? '').indexOf('ADBE Opacity') >= 0 ||
-                         (e.matchName ?? '').indexOf('ADBE Time Remapping') >= 0,
-            properties: (e.props ?? []).filter((p: any) => p.Name).map((p: any) => {
-              const resolved = resolvePropertyValue(p);
-              const entry: any = {
-                displayName: p.Name,
-                matchName: p.matchName ?? '',
-                value: resolved.value,
-                type: p.ParameterControlType ?? (typeof resolved.value === 'number' ? 2 : 1),
-                keyframes: null,
-              };
-              if (resolved.colorARGB) entry.colorARGB = resolved.colorARGB;
-              return entry;
-            }),
-          }));
-
-          const result = await bridge.callExtendScript('effects.applyEffects', [
-            clipInfo.trackIndex, clipInfo.clipIndex, clipInfo.trackType,
-            JSON.stringify(effectsDefs),
-          ], { priority: true });
-          results.push(`Applied "${cmdName}": ${JSON.stringify(result)}`);
-        } else {
-          results.push(`Preset "${cmdName}" not found`);
+          results.push(`No clip selected for ${cmdID} command "${mod.cmdName}"`);
         }
       } else {
-        results.push(`Unknown fxcl operation: ${cmdName} (${JSON.stringify(subMenu)})`);
+        results.push(`Unknown command type: ${cmdID}`);
       }
-    } else {
-      results.push(`Unknown command type: ${cmdID}`);
+    } catch (err) {
+      results.push(`Error in ${cmdID} "${mod.cmdName}": ${err instanceof Error ? err.message : String(err)}`);
     }
   }
 

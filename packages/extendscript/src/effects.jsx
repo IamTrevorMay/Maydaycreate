@@ -275,8 +275,11 @@ var MaydayEffects = (function () {
                         : qeSeq.getVideoTrackAt(trackIndex);
                     var qeClip = qeTrack.getItemAt(clipIndex);
 
-                    var addResult = qeClip.addVideoEffect(qe.project.getVideoEffectByName(effectDef.displayName));
-                    if (addResult) {
+                    var qeEffect = qe.project.getVideoEffectByName(effectDef.displayName);
+                    var componentsBefore = clip.components.numItems;
+                    var addResult = qeEffect ? qeClip.addVideoEffect(qeEffect) : false;
+                    var componentsAfter = clip.components.numItems;
+                    if (componentsAfter > componentsBefore) {
                         // Find the newly added component in scripting DOM and set properties
                         var newComp = null;
                         for (var nc = 0; nc < clip.components.numItems; nc++) {
@@ -295,7 +298,10 @@ var MaydayEffects = (function () {
                         }
                         applied.push(effectDef.displayName);
                     } else {
-                        errors.push("Failed to add: " + effectDef.displayName);
+                        errors.push("Failed to add: " + effectDef.displayName +
+                            " (qeEffect=" + (qeEffect ? "found" : "null") +
+                            ", addResult=" + String(addResult) +
+                            ", components: " + componentsBefore + " -> " + componentsAfter + ")");
                     }
                 }
             } catch (ex) {
@@ -349,12 +355,107 @@ var MaydayEffects = (function () {
         return effects;
     }
 
+    function applyVideoFilter(trackIndex, clipIndex, trackType, effectName) {
+        var seq = app.project.activeSequence;
+        if (!seq) throw new Error("No active sequence");
+
+        var tracks = trackType === "audio" ? seq.audioTracks : seq.videoTracks;
+        if (trackIndex >= tracks.numTracks) throw new Error("Track index out of range");
+
+        var track = tracks[trackIndex];
+        if (clipIndex >= track.clips.numItems) throw new Error("Clip index out of range");
+
+        var clip = track.clips[clipIndex];
+        var qeProj = qe.project;
+        var qeSeq = qeProj.getActiveSequence(0);
+        var qeTrack = qeSeq.getVideoTrackAt(trackIndex);
+        var qeClip = qeTrack.getItemAt(clipIndex);
+
+        var qeEffect = qeProj.getVideoEffectByName(effectName);
+        if (!qeEffect) throw new Error("Video effect not found: " + effectName);
+
+        var componentsBefore = clip.components.numItems;
+        qeClip.addVideoEffect(qeEffect);
+        var componentsAfter = clip.components.numItems;
+
+        return {
+            added: componentsAfter > componentsBefore,
+            effect: effectName,
+            components: componentsBefore + " -> " + componentsAfter
+        };
+    }
+
+    function applyAudioFilter(trackIndex, clipIndex, trackType, effectName) {
+        var seq = app.project.activeSequence;
+        if (!seq) throw new Error("No active sequence");
+
+        var tracks = seq.audioTracks;
+        if (trackIndex >= tracks.numTracks) throw new Error("Track index out of range");
+
+        var track = tracks[trackIndex];
+        if (clipIndex >= track.clips.numItems) throw new Error("Clip index out of range");
+
+        var clip = track.clips[clipIndex];
+        var qeProj = qe.project;
+        var qeSeq = qeProj.getActiveSequence(0);
+        var qeTrack = qeSeq.getAudioTrackAt(trackIndex);
+        var qeClip = qeTrack.getItemAt(clipIndex);
+
+        var qeEffect = qeProj.getAudioEffectByName(effectName);
+        if (!qeEffect) throw new Error("Audio effect not found: " + effectName);
+
+        var componentsBefore = clip.components.numItems;
+        qeClip.addAudioEffect(qeEffect);
+        var componentsAfter = clip.components.numItems;
+
+        return {
+            added: componentsAfter > componentsBefore,
+            effect: effectName,
+            components: componentsBefore + " -> " + componentsAfter
+        };
+    }
+
+    function applyVideoTransition(trackIndex, clipIndex, transitionName, atEnd) {
+        var qeProj = qe.project;
+        var qeSeq = qeProj.getActiveSequence(0);
+        if (!qeSeq) throw new Error("No active sequence");
+
+        var qeTrack = qeSeq.getVideoTrackAt(trackIndex);
+        var qeClip = qeTrack.getItemAt(clipIndex);
+        var transition = qeProj.getVideoTransitionByName(transitionName);
+
+        if (!transition) throw new Error("Video transition not found: " + transitionName);
+
+        // atEnd: true = apply at end of clip, false = apply at start
+        var result = qeClip.addTransition(transition, atEnd !== false);
+        return { applied: !!result, transition: transitionName, atEnd: atEnd !== false };
+    }
+
+    function applyAudioTransition(trackIndex, clipIndex, transitionName, atEnd) {
+        var qeProj = qe.project;
+        var qeSeq = qeProj.getActiveSequence(0);
+        if (!qeSeq) throw new Error("No active sequence");
+
+        var qeTrack = qeSeq.getAudioTrackAt(trackIndex);
+        var qeClip = qeTrack.getItemAt(clipIndex);
+        var transition = qeProj.getAudioTransitionByName(transitionName);
+
+        if (!transition) throw new Error("Audio transition not found: " + transitionName);
+
+        var result = qeClip.addTransition(transition, atEnd !== false);
+        return { applied: !!result, transition: transitionName, atEnd: atEnd !== false };
+    }
+
     return {
         captureEffects: captureEffects,
         getSelectedClipInfo: getSelectedClipInfo,
         captureFromSelected: captureFromSelected,
         applyEffects: applyEffects,
         removeAllEffects: removeAllEffects,
-        listAvailableEffects: listAvailableEffects
+        listAvailableEffects: listAvailableEffects,
+        applyVideoFilter: applyVideoFilter,
+        applyAudioFilter: applyAudioFilter,
+        applyVideoTransition: applyVideoTransition,
+        applyAudioTransition: applyAudioTransition
     };
 })();

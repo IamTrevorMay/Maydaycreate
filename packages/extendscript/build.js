@@ -5,7 +5,7 @@ const path = require('path');
 const srcDir = path.join(__dirname, 'src');
 const distDir = path.join(__dirname, '..', '..', 'dist', 'cep', 'host');
 
-const files = ['json2.jsx', 'utils.jsx', 'project.jsx', 'timeline.jsx', 'markers.jsx', 'effects.jsx', 'bridge.jsx', 'index.jsx'];
+const files = ['json2.jsx', 'utils.jsx', 'project.jsx', 'timeline.jsx', 'markers.jsx', 'effects.jsx', 'sequence.jsx', 'exports.jsx', 'preferences.jsx', 'bridge.jsx', 'index.jsx'];
 
 let output = '// Mayday Create - ExtendScript Bundle\n// Auto-generated - do not edit\n\n';
 

@@ -5,7 +5,10 @@ var MaydayBridge = (function () {
         "project": MaydayProject,
         "timeline": MaydayTimeline,
         "markers": MaydayMarkers,
-        "effects": MaydayEffects
+        "effects": MaydayEffects,
+        "sequence": MaydaySequence,
+        "exports": MaydayExports,
+        "preferences": MaydayPreferences
     };
 
     function callScript(moduleAndFn, argsJson) {
