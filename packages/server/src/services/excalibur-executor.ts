@@ -221,29 +221,61 @@ async function handleClipProperty(
 
   if (subMenu.selected === 'set' || subMenu.selected === 'calc') {
     const propName = cmdName;
-    const value = subMenu.value != null ? parseFloat(subMenu.value) : null;
-    const valueX = subMenu.valuex != null ? parseFloat(subMenu.valuex) : null;
-    const valueY = subMenu.valuey != null ? parseFloat(subMenu.valuey) : null;
+    const rawValue = subMenu.value != null ? parseFloat(subMenu.value) : null;
+    const rawValueX = subMenu.valuex != null ? parseFloat(subMenu.valuex) : null;
+    const rawValueY = subMenu.valuey != null ? parseFloat(subMenu.valuey) : null;
+
+    let componentName = 'Motion';
+    if (propName === 'Opacity' || propName === 'Blend Mode') {
+      componentName = 'Opacity';
+    } else if (propName === 'Volume' || propName === 'Level' || propName === 'Channel Volume') {
+      componentName = 'Volume';
+    } else if (propName === 'Speed' || propName === 'Time Remapping') {
+      componentName = 'Time Remapping';
+    }
 
     const propDef: any = { displayName: propName, value: null };
 
-    if (valueX != null && valueY != null) {
-      propDef.value = [valueX, valueY];
-      propDef.pixelValues = true;
-    } else if (value != null) {
-      propDef.value = value;
+    if (subMenu.selected === 'calc' && (rawValue != null || (rawValueX != null && rawValueY != null))) {
+      // Calc mode: read current value, then apply relative change
+      const currentEffects = await bridge.callExtendScript('effects.captureEffects', [
+        clipInfo.trackIndex, clipInfo.clipIndex, clipInfo.trackType,
+      ], { priority: true }) as any;
+
+      let currentValue: any = null;
+      if (currentEffects && currentEffects.effects) {
+        for (const eff of currentEffects.effects) {
+          if (eff.displayName === componentName) {
+            for (const prop of eff.properties) {
+              if (prop.displayName === propName) {
+                currentValue = prop.value;
+                break;
+              }
+            }
+            break;
+          }
+        }
+      }
+
+      if (rawValueX != null && rawValueY != null) {
+        const curArr = Array.isArray(currentValue) ? currentValue : [0, 0];
+        propDef.value = [curArr[0] + rawValueX, curArr[1] + rawValueY];
+        propDef.pixelValues = true;
+      } else if (rawValue != null) {
+        const curNum = typeof currentValue === 'number' ? currentValue : 0;
+        propDef.value = curNum + rawValue;
+      }
+    } else {
+      // Set mode: absolute value
+      if (rawValueX != null && rawValueY != null) {
+        propDef.value = [rawValueX, rawValueY];
+        propDef.pixelValues = true;
+      } else if (rawValue != null) {
+        propDef.value = rawValue;
+      }
     }
 
     if (propDef.value != null) {
-      let componentName = 'Motion';
-      if (propName === 'Opacity' || propName === 'Blend Mode') {
-        componentName = 'Opacity';
-      } else if (propName === 'Volume' || propName === 'Level' || propName === 'Channel Volume') {
-        componentName = 'Volume';
-      } else if (propName === 'Speed' || propName === 'Time Remapping') {
-        componentName = 'Time Remapping';
-      }
-
       const effectsDef = [{
         displayName: componentName,
         isIntrinsic: true,
@@ -254,7 +286,7 @@ async function handleClipProperty(
         clipInfo.trackIndex, clipInfo.clipIndex, clipInfo.trackType,
         JSON.stringify(effectsDef),
       ], { priority: true });
-      const label = subMenu.selected === 'calc' ? `Calc ${propName} → ${value}` : `Set ${propName}`;
+      const label = subMenu.selected === 'calc' ? `Calc ${propName} → ${propDef.value}` : `Set ${propName}`;
       return `${label}: ${JSON.stringify(result)}`;
     }
     return `No value for ${propName}`;
@@ -514,8 +546,9 @@ const EXPORT_OPS: Record<string, (bridge: BridgeHandler, mod: any) => Promise<st
     return `Export Frame: ${JSON.stringify(result)}`;
   },
   'Export Frame as JPEG': async (bridge) => {
-    const result = await bridge.callExtendScript('exports.exportFrameJPEG', [], { priority: true });
-    return `Export JPEG: ${JSON.stringify(result)}`;
+    // Premiere doesn't have exportFrameJPEG — export as PNG instead
+    const result = await bridge.callExtendScript('exports.exportFrame', [], { priority: true });
+    return `Export Frame: ${JSON.stringify(result)}`;
   },
 };
 

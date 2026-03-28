@@ -321,13 +321,11 @@ var MaydayTimeline = (function () {
     }
 
     function nestSelection() {
-        var seq = app.project.activeSequence;
-        if (!seq) return false;
-
-        // Premiere's built-in nest command for the current selection
+        // Nest selected clips in-place via Premiere menu command
+        // (createSubsequenceFromSelection creates a separate sequence, not a nest)
         try {
-            var result = seq.createSubsequenceFromSelection();
-            return result ? true : false;
+            app.executeCommand(41066);
+            return true;
         } catch (e) {
             return false;
         }

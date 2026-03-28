@@ -7,6 +7,7 @@ var MaydaySequence = (function () {
         if (!seq) throw new Error("No active sequence");
 
         var qeSeq = qe.project.getActiveSequence(0);
+        if (!qeSeq) throw new Error("No active QE sequence");
         var pos = seq.getPlayerPosition();
         qeSeq.razor(pos.ticks);
         return true;
@@ -29,10 +30,8 @@ var MaydaySequence = (function () {
     }
 
     function clearInOut() {
-        var seq = app.project.activeSequence;
-        if (!seq) throw new Error("No active sequence");
-        seq.setInPoint("0");
-        seq.setOutPoint(seq.end);
+        // Use Premiere's menu command to properly clear in/out points
+        app.executeCommand(41065);
         return true;
     }
 
@@ -53,16 +52,21 @@ var MaydaySequence = (function () {
     }
 
     function liftSelection() {
-        var seq = app.project.activeSequence;
-        if (!seq) throw new Error("No active sequence");
-        seq.lift();
+        // seq.lift() does not exist — use Premiere menu command
+        app.executeCommand(41088);
         return true;
     }
 
     function extractSelection() {
-        var seq = app.project.activeSequence;
-        if (!seq) throw new Error("No active sequence");
-        seq.extract();
+        // seq.extract() does not exist — use Premiere menu command
+        app.executeCommand(41089);
+        return true;
+    }
+
+    function nestSelection() {
+        // Nest selected clips in-place via Premiere menu command
+        // (seq.createSubsequenceFromSelection creates a separate sequence, not a nest)
+        app.executeCommand(41066);
         return true;
     }
 
@@ -86,7 +90,7 @@ var MaydaySequence = (function () {
             newName = baseName + " 2";
         }
 
-        // Find the clone and rename it
+        // Find the clone and rename it (search from end — most recently added)
         var items = app.project.rootItem.children;
         for (var i = items.numItems - 1; i >= 0; i--) {
             var item = items[i];
@@ -124,7 +128,6 @@ var MaydaySequence = (function () {
     function renderInToOut() {
         var seq = app.project.activeSequence;
         if (!seq) throw new Error("No active sequence");
-        // Render previews for the in-to-out range
         seq.renderAll();
         return true;
     }
@@ -139,7 +142,6 @@ var MaydaySequence = (function () {
     function selectAll() {
         var seq = app.project.activeSequence;
         if (!seq) throw new Error("No active sequence");
-        // Select all clips in all video and audio tracks
         var i, t, c;
         for (i = 0; i < seq.videoTracks.numTracks; i++) {
             t = seq.videoTracks[i];
@@ -176,12 +178,12 @@ var MaydaySequence = (function () {
     }
 
     function undo() {
-        app.project.undo();
+        // app.project.undo() does not exist — use Premiere menu command
+        app.executeCommand(41000);
         return true;
     }
 
     function executeCommand(commandId) {
-        // Execute a Premiere menu command by its internal ID
         app.executeCommand(commandId);
         return true;
     }
@@ -195,6 +197,7 @@ var MaydaySequence = (function () {
         goToOutPoint: goToOutPoint,
         liftSelection: liftSelection,
         extractSelection: extractSelection,
+        nestSelection: nestSelection,
         duplicateAndIncrement: duplicateAndIncrement,
         openSequenceByName: openSequenceByName,
         addMarkerAtPlayhead: addMarkerAtPlayhead,

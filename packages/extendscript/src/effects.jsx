@@ -15,8 +15,9 @@ var MaydayEffects = (function () {
     function readKeyframes(prop) {
         if (!prop.isTimeVarying()) return null;
         var kfs = [];
-        for (var i = 0; i < prop.getKeys().length; i++) {
-            var time = prop.getKeys()[i];
+        var keys = prop.getKeys();
+        for (var i = 0; i < keys.length; i++) {
+            var time = keys[i];
             kfs.push({
                 time: MaydayUtils.ticksToSeconds(time.ticks),
                 value: prop.getValueAtKey(time)
@@ -134,16 +135,6 @@ var MaydayEffects = (function () {
         return captureEffects(info.trackIndex, info.clipIndex, info.trackType);
     }
 
-    function findEffectInQE(qeClip, displayName) {
-        // QE DOM provides addVideoEffect/removeVideoEffect
-        // Search through effects to find by name
-        for (var i = 0; i < qeClip.numComponents; i++) {
-            var comp = qeClip.getComponentAt(i);
-            if (comp.name === displayName) return comp;
-        }
-        return null;
-    }
-
     function setPropertyValues(component, properties) {
         var seq = app.project.activeSequence;
         var setErrors = [];
@@ -158,13 +149,12 @@ var MaydayEffects = (function () {
                     try {
                         if (propDef.colorARGB) {
                             // Color property (PCT 5) — use dedicated setColorValue() API
-                            // setColorValue() takes alpha, red, green, blue (0-255 each)
+                            // setColorValue() takes alpha, red, green, blue normalized 0-1
                             prop.setColorValue(
-                                propDef.colorARGB.a,
-                                propDef.colorARGB.r,
-                                propDef.colorARGB.g,
-                                propDef.colorARGB.b,
-                                true
+                                propDef.colorARGB.a / 255,
+                                propDef.colorARGB.r / 255,
+                                propDef.colorARGB.g / 255,
+                                propDef.colorARGB.b / 255
                             );
                         } else if (propDef.value instanceof Array && propDef.value.length === 2 && seq) {
                             // 2D point property (Position, Anchor Point, etc.)
@@ -270,14 +260,21 @@ var MaydayEffects = (function () {
                     if (!found) skipped.push(effectDef.displayName);
                 } else {
                     // Add non-intrinsic effect via QE DOM
+                    // QE DOM indexes items differently (includes gaps/transitions),
+                    // so find the QE clip by matching start time to the scripting DOM clip
                     var qeTrack = trackType === "audio"
                         ? qeSeq.getAudioTrackAt(trackIndex)
                         : qeSeq.getVideoTrackAt(trackIndex);
-                    var qeClip = qeTrack.getItemAt(clipIndex);
+                    var qeClip = findQEClip(qeTrack, clip, clipIndex);
 
-                    var qeEffect = qe.project.getVideoEffectByName(effectDef.displayName);
+                    var isAudio = trackType === "audio";
+                    var qeEffect = isAudio
+                        ? qe.project.getAudioEffectByName(effectDef.displayName)
+                        : qe.project.getVideoEffectByName(effectDef.displayName);
                     var componentsBefore = clip.components.numItems;
-                    var addResult = qeEffect ? qeClip.addVideoEffect(qeEffect) : false;
+                    var addResult = qeEffect
+                        ? (isAudio ? qeClip.addAudioEffect(qeEffect) : qeClip.addVideoEffect(qeEffect))
+                        : false;
                     var componentsAfter = clip.components.numItems;
                     if (componentsAfter > componentsBefore) {
                         // Find the newly added component in scripting DOM and set properties
@@ -355,11 +352,23 @@ var MaydayEffects = (function () {
         return effects;
     }
 
+    // Shared helper: find QE clip by matching start time (QE DOM indexes differ from scripting DOM)
+    function findQEClip(qeTrack, scriptingClip, fallbackIndex) {
+        var clipStartTicks = scriptingClip.start.ticks;
+        for (var qi = 0; qi < qeTrack.numItems; qi++) {
+            var candidate = qeTrack.getItemAt(qi);
+            if (candidate.start && candidate.start.ticks === clipStartTicks) {
+                return candidate;
+            }
+        }
+        return qeTrack.getItemAt(fallbackIndex);
+    }
+
     function applyVideoFilter(trackIndex, clipIndex, trackType, effectName) {
         var seq = app.project.activeSequence;
         if (!seq) throw new Error("No active sequence");
 
-        var tracks = trackType === "audio" ? seq.audioTracks : seq.videoTracks;
+        var tracks = seq.videoTracks;
         if (trackIndex >= tracks.numTracks) throw new Error("Track index out of range");
 
         var track = tracks[trackIndex];
@@ -369,7 +378,7 @@ var MaydayEffects = (function () {
         var qeProj = qe.project;
         var qeSeq = qeProj.getActiveSequence(0);
         var qeTrack = qeSeq.getVideoTrackAt(trackIndex);
-        var qeClip = qeTrack.getItemAt(clipIndex);
+        var qeClip = findQEClip(qeTrack, clip, clipIndex);
 
         var qeEffect = qeProj.getVideoEffectByName(effectName);
         if (!qeEffect) throw new Error("Video effect not found: " + effectName);
@@ -399,7 +408,7 @@ var MaydayEffects = (function () {
         var qeProj = qe.project;
         var qeSeq = qeProj.getActiveSequence(0);
         var qeTrack = qeSeq.getAudioTrackAt(trackIndex);
-        var qeClip = qeTrack.getItemAt(clipIndex);
+        var qeClip = findQEClip(qeTrack, clip, clipIndex);
 
         var qeEffect = qeProj.getAudioEffectByName(effectName);
         if (!qeEffect) throw new Error("Audio effect not found: " + effectName);
@@ -416,28 +425,43 @@ var MaydayEffects = (function () {
     }
 
     function applyVideoTransition(trackIndex, clipIndex, transitionName, atEnd) {
+        var seq = app.project.activeSequence;
+        if (!seq) throw new Error("No active sequence");
+
+        var tracks = seq.videoTracks;
+        if (trackIndex >= tracks.numTracks) throw new Error("Track index out of range");
+
+        var track = tracks[trackIndex];
+        if (clipIndex >= track.clips.numItems) throw new Error("Clip index out of range");
+
+        var clip = track.clips[clipIndex];
         var qeProj = qe.project;
         var qeSeq = qeProj.getActiveSequence(0);
-        if (!qeSeq) throw new Error("No active sequence");
-
         var qeTrack = qeSeq.getVideoTrackAt(trackIndex);
-        var qeClip = qeTrack.getItemAt(clipIndex);
+        var qeClip = findQEClip(qeTrack, clip, clipIndex);
         var transition = qeProj.getVideoTransitionByName(transitionName);
 
         if (!transition) throw new Error("Video transition not found: " + transitionName);
 
-        // atEnd: true = apply at end of clip, false = apply at start
         var result = qeClip.addTransition(transition, atEnd !== false);
         return { applied: !!result, transition: transitionName, atEnd: atEnd !== false };
     }
 
     function applyAudioTransition(trackIndex, clipIndex, transitionName, atEnd) {
+        var seq = app.project.activeSequence;
+        if (!seq) throw new Error("No active sequence");
+
+        var tracks = seq.audioTracks;
+        if (trackIndex >= tracks.numTracks) throw new Error("Track index out of range");
+
+        var track = tracks[trackIndex];
+        if (clipIndex >= track.clips.numItems) throw new Error("Clip index out of range");
+
+        var clip = track.clips[clipIndex];
         var qeProj = qe.project;
         var qeSeq = qeProj.getActiveSequence(0);
-        if (!qeSeq) throw new Error("No active sequence");
-
         var qeTrack = qeSeq.getAudioTrackAt(trackIndex);
-        var qeClip = qeTrack.getItemAt(clipIndex);
+        var qeClip = findQEClip(qeTrack, clip, clipIndex);
         var transition = qeProj.getAudioTransitionByName(transitionName);
 
         if (!transition) throw new Error("Audio transition not found: " + transitionName);

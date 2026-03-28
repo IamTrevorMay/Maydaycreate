@@ -2,43 +2,25 @@
 
 var MaydayExports = (function () {
 
+    function makeTimestamp() {
+        var d = new Date();
+        return d.getFullYear() + "" +
+            (d.getMonth() + 1 < 10 ? "0" : "") + (d.getMonth() + 1) +
+            (d.getDate() < 10 ? "0" : "") + d.getDate() + "_" +
+            (d.getHours() < 10 ? "0" : "") + d.getHours() +
+            (d.getMinutes() < 10 ? "0" : "") + d.getMinutes() +
+            (d.getSeconds() < 10 ? "0" : "") + d.getSeconds();
+    }
+
     function exportFrame(outputPath) {
         var seq = app.project.activeSequence;
         if (!seq) throw new Error("No active sequence");
 
-        // Export current frame as PNG
         var time = seq.getPlayerPosition();
         if (!outputPath) {
-            // Default to desktop with timestamp
-            var d = new Date();
-            var stamp = d.getFullYear() + "" +
-                (d.getMonth() + 1 < 10 ? "0" : "") + (d.getMonth() + 1) +
-                (d.getDate() < 10 ? "0" : "") + d.getDate() + "_" +
-                (d.getHours() < 10 ? "0" : "") + d.getHours() +
-                (d.getMinutes() < 10 ? "0" : "") + d.getMinutes() +
-                (d.getSeconds() < 10 ? "0" : "") + d.getSeconds();
-            outputPath = Folder.desktop.fsName + "/Frame_" + stamp + ".png";
+            outputPath = Folder.desktop.fsName + "/Frame_" + makeTimestamp() + ".png";
         }
         seq.exportFramePNG(time, outputPath);
-        return { path: outputPath };
-    }
-
-    function exportFrameJPEG(outputPath) {
-        var seq = app.project.activeSequence;
-        if (!seq) throw new Error("No active sequence");
-
-        var time = seq.getPlayerPosition();
-        if (!outputPath) {
-            var d = new Date();
-            var stamp = d.getFullYear() + "" +
-                (d.getMonth() + 1 < 10 ? "0" : "") + (d.getMonth() + 1) +
-                (d.getDate() < 10 ? "0" : "") + d.getDate() + "_" +
-                (d.getHours() < 10 ? "0" : "") + d.getHours() +
-                (d.getMinutes() < 10 ? "0" : "") + d.getMinutes() +
-                (d.getSeconds() < 10 ? "0" : "") + d.getSeconds();
-            outputPath = Folder.desktop.fsName + "/Frame_" + stamp + ".jpg";
-        }
-        seq.exportFrameJPEG(time, outputPath);
         return { path: outputPath };
     }
 
@@ -47,7 +29,6 @@ var MaydayExports = (function () {
         if (!seq) throw new Error("No active sequence");
 
         if (presetPath && outputPath) {
-            // Direct encode via Adobe Media Encoder
             var encoder = app.encoder;
             encoder.launchEncoder();
             encoder.encodeSequence(
@@ -62,20 +43,17 @@ var MaydayExports = (function () {
         }
 
         // No preset/output specified — open export dialog
-        // This is done via Premiere's internal command
-        app.executeCommand(41056); // File > Export > Media
+        app.executeCommand(41056);
         return { dialog: true };
     }
 
     function exportSelectedClips() {
-        // Export only selected clips — opens export dialog with selection
-        app.executeCommand(41056); // File > Export > Media
+        app.executeCommand(41056);
         return { dialog: true };
     }
 
     return {
         exportFrame: exportFrame,
-        exportFrameJPEG: exportFrameJPEG,
         exportMedia: exportMedia,
         exportSelectedClips: exportSelectedClips
     };
