@@ -16,7 +16,8 @@ import { MediaService } from './services/media.js';
 import { EffectsService } from './services/effects.js';
 import { HotkeyService } from './services/hotkeys.js';
 import { SupabaseSyncService } from './services/supabase-sync.js';
-import { executeExcaliburCommand, readExcaliburCommands } from './services/excalibur-executor.js';
+import { readExcaliburCommands } from './services/excalibur-executor.js';
+import { ExcaliburHotkeyManager } from './services/excalibur-hotkeys.js';
 import { StreamDeckConfigService, STREAM_DECK_MODELS, resizeButtonsForModel } from './services/streamdeck-config.js';
 import type { StreamDeckModelId } from './services/streamdeck-config.js';
 import { StreamDeckHardwareService } from './services/streamdeck-hardware.js';
@@ -191,16 +192,14 @@ export async function startServer(config: ServerConfig) {
     }
 
     try {
-      const result = await executeExcaliburCommand(commandName, bridge);
-      if (!result.success) {
-        const status = result.error?.includes('not connected') ? 503
-          : result.error?.includes('not found') ? 404
-          : result.error?.includes('No clip') ? 400
-          : 500;
-        res.status(status).json(result);
-        return;
+      let assignment = excaliburHotkeys.getAssignment(commandName);
+      if (!assignment) {
+        assignment = excaliburHotkeys.assignHotkey(commandName);
+        excaliburHotkeys.syncToSpellBook();
       }
-      res.json(result);
+      const { simulateKeystroke } = await import('./services/keystroke-simulator.js');
+      await simulateKeystroke(assignment);
+      res.json({ success: true, results: [`Sent hotkey ${assignment.key} for "${commandName}"`] });
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       console.error(`[Excalibur] Execute error:`, message);
@@ -212,6 +211,22 @@ export async function startServer(config: ServerConfig) {
   const streamDeckConfig = new StreamDeckConfigService(config.dataDir);
   const streamDeckWorkerManager = new StreamDeckWorkerManager();
   const streamDeckHardware = new StreamDeckHardwareService(streamDeckConfig, bridge, streamDeckWorkerManager);
+  const excaliburHotkeys = new ExcaliburHotkeyManager(config.dataDir);
+  streamDeckHardware.setHotkeyManager(excaliburHotkeys);
+
+  // Pre-assign hotkeys for all currently bound Stream Deck buttons
+  const currentConfig = streamDeckConfig.getConfig();
+  for (const button of currentConfig.buttons) {
+    if (button.macroId && !excaliburHotkeys.getAssignment(button.macroId)) {
+      try {
+        excaliburHotkeys.assignHotkey(button.macroId);
+      } catch { /* pool exhausted — will assign on demand */ }
+    }
+  }
+  if (excaliburHotkeys.getAllAssignments().size > 0) {
+    excaliburHotkeys.syncToSpellBook();
+  }
+
   streamDeckHardware.start().catch(err => {
     console.error('[StreamDeck] Hardware start error:', err);
   });
@@ -426,18 +441,41 @@ Be concise, friendly, and focused on actionable editing advice. Reference the sp
         if (message.type === 'streamdeck:update-config') {
           try {
             streamDeckConfig.save(message.payload as any);
+
+            // Auto-assign hotkeys for any newly bound commands
+            const updatedConfig = streamDeckConfig.getConfig();
+            let hotkeyChanged = false;
+            for (const button of updatedConfig.buttons) {
+              if (button.macroId && !excaliburHotkeys.getAssignment(button.macroId)) {
+                try {
+                  excaliburHotkeys.assignHotkey(button.macroId);
+                  hotkeyChanged = true;
+                } catch { /* pool exhausted */ }
+              }
+            }
+            if (hotkeyChanged) {
+              excaliburHotkeys.syncToSpellBook();
+              // Tell CEP panel to reload SpellBook so Excalibur picks up new shortcuts
+              broadcastToAllPanels({
+                id: uuid(),
+                type: 'excalibur:reload-spellbook' as import('@mayday/types').BridgeMessageType,
+                payload: {},
+                timestamp: Date.now(),
+              });
+            }
+
             // Respond to sender
             ws.send(JSON.stringify({
               id: uuid(),
               type: 'streamdeck:config-data',
-              payload: streamDeckConfig.getConfig(),
+              payload: updatedConfig,
               timestamp: Date.now(),
             }));
             // Broadcast to all panels
             broadcastToAllPanels({
               id: uuid(),
               type: 'streamdeck:config-updated' as import('@mayday/types').BridgeMessageType,
-              payload: streamDeckConfig.getConfig(),
+              payload: updatedConfig,
               timestamp: Date.now(),
             });
           } catch (err) {

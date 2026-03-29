@@ -89,6 +89,22 @@ export function useWebSocket(): WebSocketState {
         break;
       }
 
+      case 'excalibur:reload-spellbook': {
+        // Dispatch a CSEvent to tell Excalibur's SpellBook library to re-read its JSON
+        try {
+          const csInterface = new (window as any).CSInterface();
+          const event = new (window as any).CSEvent(
+            'knights_of_the_editing_table.spellbook.writeoff',
+            'APPLICATION',
+          );
+          event.data = '';
+          csInterface.dispatchEvent(event);
+        } catch (err) {
+          console.error('[Mayday] Failed to dispatch SpellBook reload:', err);
+        }
+        break;
+      }
+
       default: {
         // Dispatch to registered listeners for plugin:* and ui:* messages
         const cbs = listeners.get(message.type);

@@ -1,7 +1,8 @@
 import type { StreamDeckConfigService, StreamDeckConfig, StreamDeckTrainingButton } from './streamdeck-config.js';
 import type { BridgeHandler } from '../bridge/handler.js';
 import type { StreamDeckWorkerManager } from './streamdeck-worker-manager.js';
-import { executeExcaliburCommand } from './excalibur-executor.js';
+import { simulateKeystroke } from './keystroke-simulator.js';
+import type { ExcaliburHotkeyManager } from './excalibur-hotkeys.js';
 
 export interface StreamDeckStatus {
   connected: boolean;
@@ -45,11 +46,16 @@ export class StreamDeckHardwareService {
   private trainingTags: string[] = [];
   private trainingRecordId: number | null = null;
   private onTrainingAction: ((action: TrainingAction) => void) | null = null;
+  private hotkeyManager: ExcaliburHotkeyManager | null = null;
 
   constructor(configService: StreamDeckConfigService, bridge: BridgeHandler, workerManager: StreamDeckWorkerManager) {
     this.configService = configService;
     this.bridge = bridge;
     this.workerManager = workerManager;
+  }
+
+  setHotkeyManager(manager: ExcaliburHotkeyManager): void {
+    this.hotkeyManager = manager;
   }
 
   async start(): Promise<void> {
@@ -314,14 +320,30 @@ export class StreamDeckHardwareService {
 
     console.log(`[StreamDeckHW] Button ${slot} pressed — executing "${button.macroId}"`);
 
-    executeExcaliburCommand(button.macroId, this.bridge)
-      .then(result => {
-        if (!result.success) {
-          console.error(`[StreamDeckHW] Command "${button.macroId}" failed:`, result.error);
-        }
+    if (!this.hotkeyManager) {
+      console.error(`[StreamDeckHW] No hotkey manager — cannot execute "${button.macroId}"`);
+      return;
+    }
+
+    // Get or assign a hotkey for this command
+    let assignment = this.hotkeyManager.getAssignment(button.macroId);
+    if (!assignment) {
+      try {
+        assignment = this.hotkeyManager.assignHotkey(button.macroId);
+        this.hotkeyManager.syncToSpellBook();
+        console.log(`[StreamDeckHW] Auto-assigned hotkey ${assignment.key} (Ctrl+Opt) to "${button.macroId}"`);
+      } catch (err) {
+        console.error(`[StreamDeckHW] Failed to assign hotkey for "${button.macroId}":`, err);
+        return;
+      }
+    }
+
+    simulateKeystroke(assignment)
+      .then(() => {
+        console.log(`[StreamDeckHW] Sent hotkey ${assignment!.key} for "${button.macroId}"`);
       })
       .catch(err => {
-        console.error(`[StreamDeckHW] Command "${button.macroId}" error:`, err);
+        console.error(`[StreamDeckHW] Keystroke simulation failed for "${button.macroId}":`, err);
       });
   }
 
