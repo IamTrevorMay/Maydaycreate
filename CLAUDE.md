@@ -32,10 +32,15 @@ Trevor May
 ## TODO
 - Add a `postinstall` script to package.json that auto-rebuilds better-sqlite3 for Electron after every `npm install`, so the ABI conflict is handled automatically.
 
-## Current Session Goals (2026-03-28)
-1. **Mayday Shortcuts**: Every Excalibur command works flawlessly regardless of complexity — tested to perfection.
-2. **Cutting Board**: Fully updated and aesthetically perfect.
-3. **Release-ready packaging**: Download on a new machine → all dependencies install perfectly without needing Claude Code.
+## Progress (2026-03-28)
+1. **Mayday Shortcuts**: ✅ Working. Hotkey-based execution via SpellBook + CGEvents. User assigns hotkeys in Excalibur Settings, Mayday simulates them.
+2. **Cutting Board**: Not started. Needs full update and aesthetic overhaul.
+3. **Release-ready packaging**: Not started. Download on a new machine → all dependencies install perfectly without needing Claude Code.
+
+## Build Steps (must do after code changes)
+- Server changes: `npm run build:server` then restart launcher
+- CEP panel changes: `npm run build:cep` then restart Premiere
+- Launcher changes: restart `npm run dev:launcher` (kills old Electron first)
 
 ## Preferences
 - Save memories and project context to this CLAUDE.md file (in the repo) so it persists across machines.
