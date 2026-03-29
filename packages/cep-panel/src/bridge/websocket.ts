@@ -90,17 +90,22 @@ export function useWebSocket(): WebSocketState {
       }
 
       case 'excalibur:reload-spellbook': {
-        // Dispatch a CSEvent to tell Excalibur's SpellBook library to re-read its JSON
+        // Dispatch SpellBook write event so Excalibur reloads hotkey assignments
         try {
-          const csInterface = new (window as any).CSInterface();
-          const event = new (window as any).CSEvent(
-            'knights_of_the_editing_table.spellbook.writeoff',
-            'APPLICATION',
-          );
-          event.data = '';
-          csInterface.dispatchEvent(event);
+          const W = window as any;
+          if (W.CSEvent && W.CSInterface) {
+            const csi = new W.CSInterface();
+            const evt = new W.CSEvent(
+              'knights_of_the_editing_table.spellbook.write',
+              'APPLICATION',
+              '', ''
+            );
+            evt.data = '';
+            csi.dispatchEvent(evt);
+            console.log('[Mayday] Dispatched SpellBook reload');
+          }
         } catch (err) {
-          console.error('[Mayday] Failed to dispatch SpellBook reload:', err);
+          console.error('[Mayday] SpellBook reload failed:', err);
         }
         break;
       }

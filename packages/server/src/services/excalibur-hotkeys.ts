@@ -22,8 +22,7 @@ const F_KEY_CODES: Record<string, number> = {
   F9: 101, F10: 109, F11: 103, F12: 111,
 };
 
-// Hotkey pool: Ctrl+Opt+F13-F20, then Ctrl+Opt+Shift+F13-F20, then Ctrl+Opt+F1-F12, etc.
-// Using Ctrl+Opt as base modifiers to avoid conflicts with Premiere (which uses Cmd combos)
+// Hotkey pool: Ctrl+Opt+F13-F20, then Ctrl+Opt+Shift+F13-F20, etc.
 function generateHotkeyPool(): Array<Omit<HotkeyAssignment, 'commandName'>> {
   const pool: Array<Omit<HotkeyAssignment, 'commandName'>> = [];
   const fKeyOrder = ['F13','F14','F15','F16','F17','F18','F19','F20','F1','F2','F3','F4','F5','F6','F7','F8','F9','F10','F11','F12'];
@@ -53,27 +52,21 @@ export class ExcaliburHotkeyManager {
     this.load();
   }
 
-  /** Get the hotkey assignment for a command, or null if none */
   getAssignment(commandName: string): HotkeyAssignment | null {
     return this.assignments.get(commandName) ?? null;
   }
 
-  /** Assign a hotkey to a command. Returns the assignment. */
   assignHotkey(commandName: string): HotkeyAssignment {
-    // Already assigned?
     const existing = this.assignments.get(commandName);
     if (existing) return existing;
 
-    // Find next free slot
     const usedKeys = new Set(
       [...this.assignments.values()].map(a => `${a.keyCode}-${a.ctrl}-${a.alt}-${a.shift}-${a.cmd}`),
     );
 
-    // Also read SpellBook to avoid conflicts with manually assigned Excalibur shortcuts
+    // Also avoid keys already in SpellBook (manually assigned by user)
     const spellbookUsed = this.readSpellBookUsedKeys();
-    for (const key of spellbookUsed) {
-      usedKeys.add(key);
-    }
+    for (const key of spellbookUsed) usedKeys.add(key);
 
     for (const slot of HOTKEY_POOL) {
       const slotKey = `${slot.keyCode}-${slot.ctrl}-${slot.alt}-${slot.shift}-${slot.cmd}`;
@@ -88,32 +81,25 @@ export class ExcaliburHotkeyManager {
     throw new Error('No free hotkey slots available');
   }
 
-  /** Remove a hotkey assignment */
   removeAssignment(commandName: string): void {
     this.assignments.delete(commandName);
     this.save();
   }
 
-  /** Write all assignments to the SpellBook JSON file so Excalibur picks them up */
+  /** Write all Mayday hotkey assignments into the SpellBook JSON */
   syncToSpellBook(): void {
     let spellbook: any = { extID: 'knights_of_the_editing_table.excalibur', name: 'Excalibur', commands: {} };
 
-    // Read existing SpellBook data to preserve manually set shortcuts
     if (fs.existsSync(SPELLBOOK_FILE)) {
       try {
         spellbook = JSON.parse(fs.readFileSync(SPELLBOOK_FILE, 'utf-8'));
-      } catch {
-        // Corrupted file, start fresh but keep structure
-      }
+      } catch { /* start fresh */ }
     }
-
     if (!spellbook.commands) spellbook.commands = {};
 
-    // Remove any previously auto-assigned Mayday shortcuts (prefixed with "mayday.")
+    // Remove previous Mayday entries
     for (const key of Object.keys(spellbook.commands)) {
-      if (key.startsWith('mayday.')) {
-        delete spellbook.commands[key];
-      }
+      if (key.startsWith('mayday.')) delete spellbook.commands[key];
     }
 
     // Add current assignments
@@ -133,7 +119,6 @@ export class ExcaliburHotkeyManager {
       };
     }
 
-    // Write atomically (write to temp file then rename)
     fs.mkdirSync(SPELLBOOK_DIR, { recursive: true });
     const tmpFile = SPELLBOOK_FILE + '.tmp';
     fs.writeFileSync(tmpFile, JSON.stringify(spellbook));
@@ -142,7 +127,6 @@ export class ExcaliburHotkeyManager {
     console.log(`[ExcaliburHotkeys] Synced ${this.assignments.size} hotkey(s) to SpellBook`);
   }
 
-  /** Get all current assignments */
   getAllAssignments(): Map<string, HotkeyAssignment> {
     return new Map(this.assignments);
   }
@@ -152,7 +136,9 @@ export class ExcaliburHotkeyManager {
     if (!fs.existsSync(SPELLBOOK_FILE)) return used;
     try {
       const data = JSON.parse(fs.readFileSync(SPELLBOOK_FILE, 'utf-8'));
-      for (const cmd of Object.values(data.commands ?? {}) as any[]) {
+      for (const [id, cmd] of Object.entries(data.commands ?? {}) as any[]) {
+        // Skip our own entries
+        if (id.startsWith('mayday.')) continue;
         if (cmd.shortcut) {
           const s = cmd.shortcut;
           used.add(`${s.keyCode}-${!!s.ctrl}-${!!s.alt}-${!!s.shift}-${!!s.cmd}`);
@@ -170,9 +156,7 @@ export class ExcaliburHotkeyManager {
         this.assignments.set(a.commandName, a);
       }
       console.log(`[ExcaliburHotkeys] Loaded ${this.assignments.size} hotkey assignment(s)`);
-    } catch {
-      // Start fresh
-    }
+    } catch { /* start fresh */ }
   }
 
   private save(): void {

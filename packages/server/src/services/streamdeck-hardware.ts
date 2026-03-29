@@ -321,29 +321,22 @@ export class StreamDeckHardwareService {
     console.log(`[StreamDeckHW] Button ${slot} pressed — executing "${button.macroId}"`);
 
     if (!this.hotkeyManager) {
-      console.error(`[StreamDeckHW] No hotkey manager — cannot execute "${button.macroId}"`);
+      console.error(`[StreamDeckHW] No hotkey manager`);
       return;
     }
 
-    // Get or assign a hotkey for this command
-    let assignment = this.hotkeyManager.getAssignment(button.macroId);
+    const assignment = this.hotkeyManager.getAssignment(button.macroId);
     if (!assignment) {
-      try {
-        assignment = this.hotkeyManager.assignHotkey(button.macroId);
-        this.hotkeyManager.syncToSpellBook();
-        console.log(`[StreamDeckHW] Auto-assigned hotkey ${assignment.key} (Ctrl+Opt) to "${button.macroId}"`);
-      } catch (err) {
-        console.error(`[StreamDeckHW] Failed to assign hotkey for "${button.macroId}":`, err);
-        return;
-      }
+      console.error(`[StreamDeckHW] No hotkey assigned for "${button.macroId}"`);
+      return;
     }
 
     simulateKeystroke(assignment)
       .then(() => {
-        console.log(`[StreamDeckHW] Sent hotkey ${assignment!.key} for "${button.macroId}"`);
+        console.log(`[StreamDeckHW] Sent keystroke ${assignment.key} for "${button.macroId}"`);
       })
       .catch(err => {
-        console.error(`[StreamDeckHW] Keystroke simulation failed for "${button.macroId}":`, err);
+        console.error(`[StreamDeckHW] Keystroke failed for "${button.macroId}":`, err);
       });
   }
 

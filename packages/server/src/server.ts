@@ -18,6 +18,7 @@ import { HotkeyService } from './services/hotkeys.js';
 import { SupabaseSyncService } from './services/supabase-sync.js';
 import { readExcaliburCommands } from './services/excalibur-executor.js';
 import { ExcaliburHotkeyManager } from './services/excalibur-hotkeys.js';
+import { simulateKeystroke } from './services/keystroke-simulator.js';
 import { StreamDeckConfigService, STREAM_DECK_MODELS, resizeButtonsForModel } from './services/streamdeck-config.js';
 import type { StreamDeckModelId } from './services/streamdeck-config.js';
 import { StreamDeckHardwareService } from './services/streamdeck-hardware.js';
@@ -197,9 +198,8 @@ export async function startServer(config: ServerConfig) {
         assignment = excaliburHotkeys.assignHotkey(commandName);
         excaliburHotkeys.syncToSpellBook();
       }
-      const { simulateKeystroke } = await import('./services/keystroke-simulator.js');
       await simulateKeystroke(assignment);
-      res.json({ success: true, results: [`Sent hotkey ${assignment.key} for "${commandName}"`] });
+      res.json({ success: true, results: [`Sent keystroke ${assignment.key} for "${commandName}"`] });
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       console.error(`[Excalibur] Execute error:`, message);
@@ -214,16 +214,17 @@ export async function startServer(config: ServerConfig) {
   const excaliburHotkeys = new ExcaliburHotkeyManager(config.dataDir);
   streamDeckHardware.setHotkeyManager(excaliburHotkeys);
 
-  // Pre-assign hotkeys for all currently bound Stream Deck buttons
-  const currentConfig = streamDeckConfig.getConfig();
-  for (const button of currentConfig.buttons) {
+  // Pre-assign hotkeys for all currently bound buttons and sync to SpellBook
+  let needsSync = false;
+  for (const button of streamDeckConfig.getConfig().buttons) {
     if (button.macroId && !excaliburHotkeys.getAssignment(button.macroId)) {
       try {
         excaliburHotkeys.assignHotkey(button.macroId);
-      } catch { /* pool exhausted — will assign on demand */ }
+        needsSync = true;
+      } catch { /* pool exhausted */ }
     }
   }
-  if (excaliburHotkeys.getAllAssignments().size > 0) {
+  if (needsSync) {
     excaliburHotkeys.syncToSpellBook();
   }
 
@@ -442,20 +443,19 @@ Be concise, friendly, and focused on actionable editing advice. Reference the sp
           try {
             streamDeckConfig.save(message.payload as any);
 
-            // Auto-assign hotkeys for any newly bound commands
-            const updatedConfig = streamDeckConfig.getConfig();
+            // Auto-assign hotkeys for newly bound commands
             let hotkeyChanged = false;
-            for (const button of updatedConfig.buttons) {
-              if (button.macroId && !excaliburHotkeys.getAssignment(button.macroId)) {
+            for (const btn of streamDeckConfig.getConfig().buttons) {
+              if (btn.macroId && !excaliburHotkeys.getAssignment(btn.macroId)) {
                 try {
-                  excaliburHotkeys.assignHotkey(button.macroId);
+                  excaliburHotkeys.assignHotkey(btn.macroId);
                   hotkeyChanged = true;
                 } catch { /* pool exhausted */ }
               }
             }
             if (hotkeyChanged) {
               excaliburHotkeys.syncToSpellBook();
-              // Tell CEP panel to reload SpellBook so Excalibur picks up new shortcuts
+              // Tell CEP panel to trigger SpellBook reload
               broadcastToAllPanels({
                 id: uuid(),
                 type: 'excalibur:reload-spellbook' as import('@mayday/types').BridgeMessageType,
@@ -468,14 +468,14 @@ Be concise, friendly, and focused on actionable editing advice. Reference the sp
             ws.send(JSON.stringify({
               id: uuid(),
               type: 'streamdeck:config-data',
-              payload: updatedConfig,
+              payload: streamDeckConfig.getConfig(),
               timestamp: Date.now(),
             }));
             // Broadcast to all panels
             broadcastToAllPanels({
               id: uuid(),
               type: 'streamdeck:config-updated' as import('@mayday/types').BridgeMessageType,
-              payload: updatedConfig,
+              payload: streamDeckConfig.getConfig(),
               timestamp: Date.now(),
             });
           } catch (err) {
@@ -723,6 +723,16 @@ Be concise, friendly, and focused on actionable editing advice. Reference the sp
             mainPanelWs = ws;
             bridge.setCepConnection(ws);
             console.log('[Mayday] Main panel ready');
+
+            // Trigger SpellBook reload so Excalibur picks up any auto-assigned hotkeys
+            if (excaliburHotkeys.getAllAssignments().size > 0) {
+              ws.send(JSON.stringify({
+                id: uuid(),
+                type: 'excalibur:reload-spellbook',
+                payload: {},
+                timestamp: Date.now(),
+              }));
+            }
           }
           return;
         }
