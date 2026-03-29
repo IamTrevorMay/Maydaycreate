@@ -18,7 +18,6 @@ import { HotkeyService } from './services/hotkeys.js';
 import { SupabaseSyncService } from './services/supabase-sync.js';
 import { readExcaliburCommands } from './services/excalibur-executor.js';
 import { ExcaliburHotkeyManager } from './services/excalibur-hotkeys.js';
-import { simulateKeystroke } from './services/keystroke-simulator.js';
 import { StreamDeckConfigService, STREAM_DECK_MODELS, resizeButtonsForModel } from './services/streamdeck-config.js';
 import type { StreamDeckModelId } from './services/streamdeck-config.js';
 import { StreamDeckHardwareService } from './services/streamdeck-hardware.js';
@@ -193,11 +192,12 @@ export async function startServer(config: ServerConfig) {
     }
 
     try {
-      let assignment = excaliburHotkeys.getAssignment(commandName);
+      const assignment = excaliburHotkeys.getAssignment(commandName);
       if (!assignment) {
-        assignment = excaliburHotkeys.assignHotkey(commandName);
-        excaliburHotkeys.syncToSpellBook();
+        res.status(404).json({ success: false, error: `No hotkey assigned for "${commandName}" — assign one in Excalibur Settings` });
+        return;
       }
+      const { simulateKeystroke } = await import('./services/keystroke-simulator.js');
       await simulateKeystroke(assignment);
       res.json({ success: true, results: [`Sent keystroke ${assignment.key} for "${commandName}"`] });
     } catch (err) {
@@ -211,22 +211,8 @@ export async function startServer(config: ServerConfig) {
   const streamDeckConfig = new StreamDeckConfigService(config.dataDir);
   const streamDeckWorkerManager = new StreamDeckWorkerManager();
   const streamDeckHardware = new StreamDeckHardwareService(streamDeckConfig, bridge, streamDeckWorkerManager);
-  const excaliburHotkeys = new ExcaliburHotkeyManager(config.dataDir);
+  const excaliburHotkeys = new ExcaliburHotkeyManager();
   streamDeckHardware.setHotkeyManager(excaliburHotkeys);
-
-  // Pre-assign hotkeys for all currently bound buttons and sync to SpellBook
-  let needsSync = false;
-  for (const button of streamDeckConfig.getConfig().buttons) {
-    if (button.macroId && !excaliburHotkeys.getAssignment(button.macroId)) {
-      try {
-        excaliburHotkeys.assignHotkey(button.macroId);
-        needsSync = true;
-      } catch { /* pool exhausted */ }
-    }
-  }
-  if (needsSync) {
-    excaliburHotkeys.syncToSpellBook();
-  }
 
   streamDeckHardware.start().catch(err => {
     console.error('[StreamDeck] Hardware start error:', err);
@@ -442,27 +428,6 @@ Be concise, friendly, and focused on actionable editing advice. Reference the sp
         if (message.type === 'streamdeck:update-config') {
           try {
             streamDeckConfig.save(message.payload as any);
-
-            // Auto-assign hotkeys for newly bound commands
-            let hotkeyChanged = false;
-            for (const btn of streamDeckConfig.getConfig().buttons) {
-              if (btn.macroId && !excaliburHotkeys.getAssignment(btn.macroId)) {
-                try {
-                  excaliburHotkeys.assignHotkey(btn.macroId);
-                  hotkeyChanged = true;
-                } catch { /* pool exhausted */ }
-              }
-            }
-            if (hotkeyChanged) {
-              excaliburHotkeys.syncToSpellBook();
-              // Tell CEP panel to trigger SpellBook reload
-              broadcastToAllPanels({
-                id: uuid(),
-                type: 'excalibur:reload-spellbook' as import('@mayday/types').BridgeMessageType,
-                payload: {},
-                timestamp: Date.now(),
-              });
-            }
 
             // Respond to sender
             ws.send(JSON.stringify({
@@ -723,16 +688,6 @@ Be concise, friendly, and focused on actionable editing advice. Reference the sp
             mainPanelWs = ws;
             bridge.setCepConnection(ws);
             console.log('[Mayday] Main panel ready');
-
-            // Trigger SpellBook reload so Excalibur picks up any auto-assigned hotkeys
-            if (excaliburHotkeys.getAllAssignments().size > 0) {
-              ws.send(JSON.stringify({
-                id: uuid(),
-                type: 'excalibur:reload-spellbook',
-                payload: {},
-                timestamp: Date.now(),
-              }));
-            }
           }
           return;
         }

@@ -327,7 +327,7 @@ export class StreamDeckHardwareService {
 
     const assignment = this.hotkeyManager.getAssignment(button.macroId);
     if (!assignment) {
-      console.error(`[StreamDeckHW] No hotkey assigned for "${button.macroId}"`);
+      console.error(`[StreamDeckHW] No hotkey assigned for "${button.macroId}" — assign one in Excalibur Settings`);
       return;
     }
 

@@ -1,30 +1,31 @@
 import { execFile } from 'child_process';
 import path from 'path';
+import fs from 'fs';
+import { fileURLToPath } from 'url';
 import type { HotkeyAssignment } from './excalibur-hotkeys.js';
 
-// Path to the compiled Swift CGEvent binary
-// In dev: monorepo tools directory
-// In packaged: resources/tools directory
 let binaryPath: string | null = null;
 
 function getBinaryPath(): string {
   if (binaryPath) return binaryPath;
 
-  // Try dev path first
-  const devPath = path.join(process.cwd(), 'tools', 'keystroke-sender', 'keystroke-sender');
-  // Try monorepo root (when running from packages/server)
-  const monorepoPath = path.join(process.cwd(), '..', '..', 'tools', 'keystroke-sender', 'keystroke-sender');
-  // Try relative to this file
-  const relativePath = path.resolve(__dirname, '..', '..', '..', '..', 'tools', 'keystroke-sender', 'keystroke-sender');
+  const candidates = [
+    path.join(process.cwd(), 'tools', 'keystroke-sender', 'keystroke-sender'),
+    path.join(process.cwd(), '..', '..', 'tools', 'keystroke-sender', 'keystroke-sender'),
+  ];
 
-  for (const p of [devPath, monorepoPath, relativePath]) {
-    try {
-      const fs = require('fs');
-      if (fs.existsSync(p)) {
-        binaryPath = p;
-        return p;
-      }
-    } catch { /* continue */ }
+  // Try import.meta.url based path
+  try {
+    const thisDir = path.dirname(fileURLToPath(import.meta.url));
+    candidates.push(path.resolve(thisDir, '..', '..', '..', '..', 'tools', 'keystroke-sender', 'keystroke-sender'));
+    candidates.push(path.resolve(thisDir, '..', 'tools', 'keystroke-sender', 'keystroke-sender'));
+  } catch { /* import.meta.url not available */ }
+
+  for (const p of candidates) {
+    if (fs.existsSync(p)) {
+      binaryPath = p;
+      return p;
+    }
   }
 
   throw new Error('keystroke-sender binary not found. Run: cd tools/keystroke-sender && swiftc -O -o keystroke-sender keystroke-sender.swift');

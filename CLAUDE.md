@@ -22,18 +22,20 @@ Trevor May
 - The launcher has a **single instance lock** (`app.requestSingleInstanceLock()` in `packages/launcher/src/main/index.ts:100-104`). Stale Electron processes will cause new launches to silently quit. Always kill old Electron processes before relaunching.
 - After building/installing, also rebuild and install the CEP panel: `npm run build:cep` then `sudo bash scripts/install-cep.sh`.
 
-## Excalibur Command Executor
-- The executor (`packages/server/src/services/excalibur-executor.ts`) dispatches Excalibur commands from `.cmdlist.json` via handler maps.
-- Uses `clipHandlers` (need selected clip: fxvp, fxap, fxcl, fxvf, fxaf, fxvt, fxat) and `noClipHandlers` (fxsq, fxsl, fxex, fxpr, fxpf, fxsp, fxmd).
-- ExtendScript modules in `packages/extendscript/src/`: effects.jsx, sequence.jsx, exports.jsx, preferences.jsx, project.jsx, timeline.jsx, markers.jsx.
-- Bridge dispatcher in `bridge.jsx` routes `module.function` calls to registered modules.
-- Build order in `build.js` matters — modules must be defined before `bridge.jsx`.
+## Mayday Shortcuts (Excalibur Integration)
+- **Architecture**: User assigns hotkeys to Excalibur commands in Excalibur Settings. Mayday reads the hotkey mapping from SpellBook JSON (`~/Library/Application Support/SpellBook/knights_of_the_editing_table.excalibur.json`). On Stream Deck button press, simulates the keystroke via CGEvents (Swift binary at `tools/keystroke-sender/`). SpellBook's `spell_mac` catches it → Excalibur executes the command natively.
+- **Key files**: `excalibur-hotkeys.ts` (reads SpellBook), `keystroke-simulator.ts` (calls Swift binary), `streamdeck-hardware.ts` (button press handler).
+- **DO NOT** try to translate Excalibur presets/commands via ExtendScript — this was attempted and abandoned due to complexity (keyframes, QE DOM bugs, property resolution issues). Let Excalibur handle execution natively.
+- **DO NOT** write to SpellBook — Excalibur overwrites it on startup. Only read from it.
 - CEP panel install is a symlink: `npm run build:cep` updates files in place, no reinstall needed after first `sudo bash scripts/install-cep.sh`.
-- **Known issue**: `qeClip.addVideoEffect()` can return truthy but silently fail. Debug check added: compare `clip.components.numItems` before/after to verify effect was actually added.
 
 ## TODO
 - Add a `postinstall` script to package.json that auto-rebuilds better-sqlite3 for Electron after every `npm install`, so the ABI conflict is handled automatically.
-- Investigate and fix the Drop Shadow effect not applying despite server reporting success (QE DOM `addVideoEffect` silent failure).
+
+## Current Session Goals (2026-03-28)
+1. **Mayday Shortcuts**: Every Excalibur command works flawlessly regardless of complexity — tested to perfection.
+2. **Cutting Board**: Fully updated and aesthetically perfect.
+3. **Release-ready packaging**: Download on a new machine → all dependencies install perfectly without needing Claude Code.
 
 ## Preferences
 - Save memories and project context to this CLAUDE.md file (in the repo) so it persists across machines.
