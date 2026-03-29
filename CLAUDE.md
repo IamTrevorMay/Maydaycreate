@@ -32,9 +32,12 @@ Trevor May
 ## TODO
 - Add a `postinstall` script to package.json that auto-rebuilds better-sqlite3 for Electron after every `npm install`, so the ABI conflict is handled automatically.
 
-## Progress (2026-03-28)
+## Progress (2026-03-29)
 1. **Mayday Shortcuts**: ✅ Working. Hotkey-based execution via SpellBook + CGEvents. User assigns hotkeys in Excalibur Settings, Mayday simulates them.
-2. **Cutting Board**: Not started. Needs full update and aesthetic overhaul.
+2. **Cutting Board**: In progress — centralized cloud model registry + UI overhaul underway.
+   - ✅ Cloud Model Registry: Training runs auto-push to `autocut_models` Supabase table on every train. Personal Records panel shows ALL machines with best-model highlighting.
+   - ✅ Removed manual "Push to Cloud" merge flow (`cloudMergeTrain`). Post-train UI now shows "Automatically synced" message that auto-dismisses after 5s.
+   - ✅ Delete button visibility fix on session rows (opacity 0.4→0.6, color `text.disabled`→`text.secondary`).
 3. **Release-ready packaging**: Not started. Download on a new machine → all dependencies install perfectly without needing Claude Code.
 
 ## Build Steps (must do after code changes)

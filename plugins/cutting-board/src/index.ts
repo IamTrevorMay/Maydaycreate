@@ -458,6 +458,24 @@ export default definePlugin({
       return db.getUnnamedEndedSessions();
     },
 
+    'all-sessions': async (ctx) => {
+      if (!db) db = new CuttingBoardDB(ctx.dataDir);
+      return db.getAllSessions();
+    },
+
+    'delete-session': async (ctx, args) => {
+      if (!db) db = new CuttingBoardDB(ctx.dataDir);
+      const { sessionId } = args as { sessionId: number };
+      db.deleteSession(sessionId);
+      ctx.log.info(`Session ${sessionId} deleted`);
+      return { deleted: true, sessionId };
+    },
+
+    'training-data-summary': async (ctx) => {
+      if (!db) db = new CuttingBoardDB(ctx.dataDir);
+      return db.getTrainingDataSummary();
+    },
+
     stats: async (ctx) => {
       if (!db || currentSessionId == null) {
         ctx.ui.showToast('No active session', 'warning');

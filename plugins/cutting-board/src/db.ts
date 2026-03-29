@@ -485,6 +485,88 @@ export class CuttingBoardDB {
     ).get() as { id: number; trainedAt: number; trainingSize: number; accuracy: number; version: number } | undefined ?? null;
   }
 
+  getAllSessions(): Array<{
+    id: number;
+    sequenceId: string;
+    sequenceName: string;
+    sessionName: string | null;
+    videoId: string | null;
+    startedAt: number;
+    endedAt: number | null;
+    totalEdits: number;
+    cutCount: number;
+    taggedCount: number;
+  }> {
+    return this.db.prepare(`
+      SELECT
+        s.id,
+        s.sequence_id AS sequenceId,
+        s.sequence_name AS sequenceName,
+        s.session_name AS sessionName,
+        s.video_id AS videoId,
+        s.started_at AS startedAt,
+        s.ended_at AS endedAt,
+        s.total_edits AS totalEdits,
+        COALESCE((SELECT COUNT(*) FROM cut_records cr
+          WHERE cr.session_id = s.id AND cr.edit_type = 'cut'), 0) AS cutCount,
+        COALESCE((SELECT COUNT(*) FROM cut_records cr
+          WHERE cr.session_id = s.id AND cr.intent_tags IS NOT NULL
+          AND cr.intent_tags != '[]'), 0) AS taggedCount
+      FROM sessions s
+      ORDER BY s.started_at DESC
+    `).all() as Array<{
+      id: number; sequenceId: string; sequenceName: string;
+      sessionName: string | null; videoId: string | null;
+      startedAt: number; endedAt: number | null; totalEdits: number;
+      cutCount: number; taggedCount: number;
+    }>;
+  }
+
+  deleteSession(sessionId: number): void {
+    this.db.prepare('DELETE FROM cut_records WHERE session_id = ?').run(sessionId);
+    this.db.prepare('DELETE FROM sessions WHERE id = ?').run(sessionId);
+  }
+
+  getTrainingDataSummary(): {
+    totalRecords: number;
+    ratedCount: number;
+    unratedCount: number;
+    taggedCount: number;
+    untaggedCount: number;
+    boostedCount: number;
+    badCount: number;
+  } {
+    const total = (this.db.prepare(
+      'SELECT COUNT(*) as c FROM cut_records WHERE is_undo = 0'
+    ).get() as { c: number }).c;
+
+    const unrated = (this.db.prepare(
+      'SELECT COUNT(*) as c FROM cut_records WHERE is_undo = 0 AND rating IS NULL'
+    ).get() as { c: number }).c;
+
+    const untagged = (this.db.prepare(
+      "SELECT COUNT(*) as c FROM cut_records WHERE is_undo = 0 AND (intent_tags IS NULL OR intent_tags = '[]')"
+    ).get() as { c: number }).c;
+
+    const boosted = (this.db.prepare(
+      'SELECT COUNT(*) as c FROM cut_records WHERE is_undo = 0 AND boosted = 1'
+    ).get() as { c: number }).c;
+
+    const bad = (this.db.prepare(
+      'SELECT COUNT(*) as c FROM cut_records WHERE is_undo = 0 AND rating = 0'
+    ).get() as { c: number }).c;
+
+    return {
+      totalRecords: total,
+      ratedCount: total - unrated,
+      unratedCount: unrated,
+      taggedCount: total - untagged,
+      untaggedCount: untagged,
+      boostedCount: boosted,
+      badCount: bad,
+    };
+  }
+
   close(): void {
     this.db.close();
   }

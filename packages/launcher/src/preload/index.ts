@@ -25,6 +25,9 @@ import type {
   CuttingBoardAggregateStats,
   CuttingBoardTrainingRun,
   CuttingBoardJoinResult,
+  CuttingBoardSession,
+  CuttingBoardTrainingDataSummary,
+  CloudTrainingRun,
   CutFinderProgress,
   CutFinderAnalysis,
   CutFinderAnalysisSummary,
@@ -153,15 +156,18 @@ const mayday = {
       ipcRenderer.invoke('cuttingBoard:trainModel'),
     joinModels: (modelAVideoId: string, modelBVideoId: string): Promise<CuttingBoardJoinResult> =>
       ipcRenderer.invoke('cuttingBoard:joinModels', modelAVideoId, modelBVideoId),
-    cloudMergeTrain: (localResult: { version: number; accuracy: number; trainingSize: number }): Promise<{
-      cloudAccuracy: number;
-      cloudTrainingSize: number;
-      cloudVersion: number;
-      localAccuracy: number;
-      localTrainingSize: number;
-    }> => ipcRenderer.invoke('cuttingBoard:cloudMergeTrain', localResult),
+    getCloudRegistry: (): Promise<CloudTrainingRun[]> =>
+      ipcRenderer.invoke('cuttingBoard:getCloudRegistry'),
     listDatasets: (): Promise<{ modelA: Array<{ videoId: string; count: number }>; modelB: Array<{ videoId: string; count: number }> }> =>
       ipcRenderer.invoke('cuttingBoard:listDatasets'),
+    getAllSessions: (): Promise<CuttingBoardSession[]> =>
+      ipcRenderer.invoke('cuttingBoard:getAllSessions'),
+    deleteSession: (sessionId: number): Promise<{ deleted: boolean; sessionId: number } | null> =>
+      ipcRenderer.invoke('cuttingBoard:deleteSession', sessionId),
+    nameSession: (sessionId: number, sessionName: string): Promise<unknown> =>
+      ipcRenderer.invoke('cuttingBoard:nameSession', sessionId, sessionName),
+    getTrainingDataSummary: (): Promise<CuttingBoardTrainingDataSummary | null> =>
+      ipcRenderer.invoke('cuttingBoard:getTrainingDataSummary'),
   },
 
   cutFinder: {

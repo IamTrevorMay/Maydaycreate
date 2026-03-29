@@ -7,7 +7,7 @@ import { loadConfig } from './config-store.js';
 import { runCuttingBoardJoin, listAvailableDatasets } from './cutting-board-join.js';
 import { CutFinder } from './cutting-board-finder/cut-finder.js';
 import { CutFinderSyncService } from './cutting-board-finder/cut-finder-sync.js';
-import type { CuttingBoardAggregateStats, CuttingBoardTrainingRun, CutFinderExportOptions } from '@mayday/types';
+import type { CuttingBoardAggregateStats, CuttingBoardTrainingRun, CloudTrainingRun, CutFinderExportOptions } from '@mayday/types';
 
 let _cutFinder: CutFinder | null = null;
 let _cutFinderSync: CutFinderSyncService | null = null;
@@ -436,6 +436,40 @@ export function registerCuttingBoardHandlers(): void {
     return [];
   });
 
+  ipcMain.handle('cuttingBoard:getCloudRegistry', async (): Promise<CloudTrainingRun[]> => {
+    const config = loadConfig();
+    if (!config.supabaseUrl || !config.supabaseAnonKey) return [];
+
+    try {
+      const supabase = createClient(config.supabaseUrl, config.supabaseAnonKey);
+      const { data, error } = await supabase
+        .from('autocut_models')
+        .select('machine_id, machine_name, version, trained_at, training_size, accuracy')
+        .order('accuracy', { ascending: false })
+        .order('training_size', { ascending: false })
+        .order('trained_at', { ascending: false });
+
+      if (error) {
+        console.error('[CuttingBoard] getCloudRegistry error:', error.message);
+        return [];
+      }
+
+      return (data ?? []).map((row, i) => ({
+        id: `${row.machine_id}:${row.version}`,
+        machineId: row.machine_id as string,
+        machineName: (row.machine_name as string) || row.machine_id as string,
+        version: row.version as number,
+        trainedAt: row.trained_at as number,
+        trainingSize: row.training_size as number,
+        accuracy: row.accuracy as number,
+        isBest: i === 0,
+      }));
+    } catch (err) {
+      console.error('[CuttingBoard] getCloudRegistry error:', err);
+      return [];
+    }
+  });
+
   ipcMain.handle('cuttingBoard:trainModel', async () => {
     const config = loadConfig();
 
@@ -505,7 +539,44 @@ export function registerCuttingBoardHandlers(): void {
     });
     if (!res.ok) throw new Error(`Train model failed: ${res.status}`);
     const data = await res.json();
-    return data.success ? data.result : data;
+    const trainResult = data.success ? data.result : data;
+
+    // Auto-push to cloud registry (fire-and-forget)
+    if (config.supabaseUrl && config.supabaseAnonKey && trainResult?.version != null) {
+      (async () => {
+        try {
+          const supabase = createClient(config.supabaseUrl!, config.supabaseAnonKey!);
+          const serverBase = `http://localhost:${config.serverPort}/api/plugins/cutting-board/command`;
+          const modelRes = await fetch(`${serverBase}/get-model-data`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+          });
+          if (modelRes.ok) {
+            const modelData = await modelRes.json();
+            if (modelData.success && modelData.result) {
+              const model = modelData.result;
+              await supabase
+                .from('autocut_models')
+                .upsert({
+                  machine_id: config.machineId,
+                  machine_name: config.machineName,
+                  version: model.version,
+                  trained_at: model.trainedAt,
+                  training_size: model.trainingSize,
+                  accuracy: model.accuracy,
+                  model_json: { classifier: model.classifier, regressors: model.regressors },
+                  uploaded_at: new Date().toISOString(),
+                }, { onConflict: 'machine_id,version' });
+              console.log(`[CuttingBoard] Auto-pushed model v${model.version} to cloud registry`);
+            }
+          }
+        } catch (err) {
+          console.error('[CuttingBoard] Auto-push to cloud failed:', err);
+        }
+      })();
+    }
+
+    return trainResult;
   });
 
   ipcMain.handle('cuttingBoard:cloudMergeTrain', async (_e, localResult: { version: number; accuracy: number; trainingSize: number }) => {
@@ -679,6 +750,99 @@ export function registerCuttingBoardHandlers(): void {
 
   ipcMain.handle('cuttingBoard:listDatasets', async () => {
     return listAvailableDatasets();
+  });
+
+  ipcMain.handle('cuttingBoard:getAllSessions', async () => {
+    // Try server plugin API first
+    try {
+      const config = loadConfig();
+      const url = `http://localhost:${config.serverPort}/api/plugins/cutting-board/command/all-sessions`;
+      const res = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' } });
+      if (res.ok) {
+        const data = await res.json();
+        if (data.success) return data.result;
+      }
+    } catch {}
+
+    // Fall back to direct SQLite read
+    const db = openDb();
+    if (!db) return [];
+    try {
+      return db.prepare(`
+        SELECT s.id, s.sequence_id AS sequenceId, s.sequence_name AS sequenceName,
+               s.session_name AS sessionName, s.video_id AS videoId,
+               s.started_at AS startedAt, s.ended_at AS endedAt, s.total_edits AS totalEdits,
+               COALESCE((SELECT COUNT(*) FROM cut_records cr
+                 WHERE cr.session_id = s.id AND cr.edit_type = 'cut'), 0) AS cutCount,
+               COALESCE((SELECT COUNT(*) FROM cut_records cr
+                 WHERE cr.session_id = s.id AND cr.intent_tags IS NOT NULL
+                 AND cr.intent_tags != '[]'), 0) AS taggedCount
+        FROM sessions s ORDER BY s.started_at DESC
+      `).all();
+    } finally {
+      db.close();
+    }
+  });
+
+  ipcMain.handle('cuttingBoard:deleteSession', async (_e, sessionId: number) => {
+    const config = loadConfig();
+    const url = `http://localhost:${config.serverPort}/api/plugins/cutting-board/command/delete-session`;
+    const res = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ sessionId }),
+    });
+    if (!res.ok) throw new Error(`Failed to delete session ${sessionId}`);
+    const data = await res.json();
+    return data.success ? data.result : null;
+  });
+
+  ipcMain.handle('cuttingBoard:nameSession', async (_e, sessionId: number, sessionName: string) => {
+    const config = loadConfig();
+    const url = `http://localhost:${config.serverPort}/api/plugins/cutting-board/command/name-session`;
+    const res = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ sessionId, sessionName }),
+    });
+    if (!res.ok) throw new Error(`Failed to rename session ${sessionId}`);
+    const data = await res.json();
+    return data.success ? data.result : null;
+  });
+
+  ipcMain.handle('cuttingBoard:getTrainingDataSummary', async () => {
+    // Try server plugin API first
+    try {
+      const config = loadConfig();
+      const url = `http://localhost:${config.serverPort}/api/plugins/cutting-board/command/training-data-summary`;
+      const res = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' } });
+      if (res.ok) {
+        const data = await res.json();
+        if (data.success) return data.result;
+      }
+    } catch {}
+
+    // Fall back to direct SQLite read
+    const db = openDb();
+    if (!db) return null;
+    try {
+      const total = (db.prepare('SELECT COUNT(*) as c FROM cut_records WHERE is_undo = 0').get() as { c: number }).c;
+      const unrated = (db.prepare('SELECT COUNT(*) as c FROM cut_records WHERE is_undo = 0 AND rating IS NULL').get() as { c: number }).c;
+      const untagged = (db.prepare("SELECT COUNT(*) as c FROM cut_records WHERE is_undo = 0 AND (intent_tags IS NULL OR intent_tags = '[]')").get() as { c: number }).c;
+      const boosted = (db.prepare('SELECT COUNT(*) as c FROM cut_records WHERE is_undo = 0 AND boosted = 1').get() as { c: number }).c;
+      const bad = (db.prepare('SELECT COUNT(*) as c FROM cut_records WHERE is_undo = 0 AND rating = 0').get() as { c: number }).c;
+      return {
+        totalRecords: total,
+        ratedCount: total - unrated,
+        unratedCount: unrated,
+        taggedCount: total - untagged,
+        untaggedCount: untagged,
+        boostedCount: boosted,
+        badCount: bad,
+      };
+    } finally {
+      db.close();
+    }
   });
 
   // ── Cut Finder IPC handlers ─────────────────────────────────────────────
