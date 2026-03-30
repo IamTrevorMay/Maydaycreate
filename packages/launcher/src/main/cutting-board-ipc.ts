@@ -856,12 +856,13 @@ export function registerCuttingBoardHandlers(): void {
           .order('trained_at', { ascending: false })
           .limit(1);
         if (data && data.length > 0) {
-          lastTrainedAt = data[0].trained_at as number;
+          // trained_at could be epoch ms or ISO string — normalize to epoch ms
+          const raw = data[0].trained_at;
+          lastTrainedAt = typeof raw === 'string' ? new Date(raw).getTime() : (raw as number);
         }
       } catch {}
     }
     if (lastTrainedAt === 0) {
-      // Fall back to local training runs
       const db = openDb();
       if (db) {
         try {
@@ -872,21 +873,25 @@ export function registerCuttingBoardHandlers(): void {
     }
 
     // Query Supabase for cloud-wide counts since last train
+    // detected_at in Supabase is stored as epoch ms (bigint)
     if (config.supabaseUrl && config.supabaseAnonKey) {
       try {
         const supabase = createClient(config.supabaseUrl, config.supabaseAnonKey);
-        const base = supabase.from('cut_records').select('*', { count: 'exact', head: true }).eq('is_undo', false);
 
-        const { count: total } = await supabase.from('cut_records').select('*', { count: 'exact', head: true })
-          .eq('is_undo', false).gt('detectedAt', lastTrainedAt);
+        const { count: total, error: totalErr } = await supabase.from('cut_records').select('*', { count: 'exact', head: true })
+          .eq('is_undo', false).gt('detected_at', lastTrainedAt);
+        if (totalErr) console.error('[CuttingBoard] training summary total error:', totalErr.message);
+
         const { count: unrated } = await supabase.from('cut_records').select('*', { count: 'exact', head: true })
-          .eq('is_undo', false).is('rating', null).gt('detectedAt', lastTrainedAt);
+          .eq('is_undo', false).is('rating', null).gt('detected_at', lastTrainedAt);
         const { count: untagged } = await supabase.from('cut_records').select('*', { count: 'exact', head: true })
-          .eq('is_undo', false).or('intent_tags.is.null,intent_tags.eq.[]').gt('detectedAt', lastTrainedAt);
+          .eq('is_undo', false).or('intent_tags.is.null,intent_tags.eq.[]').gt('detected_at', lastTrainedAt);
         const { count: boosted } = await supabase.from('cut_records').select('*', { count: 'exact', head: true })
-          .eq('is_undo', false).eq('boosted', true).gt('detectedAt', lastTrainedAt);
+          .eq('is_undo', false).eq('boosted', true).gt('detected_at', lastTrainedAt);
         const { count: bad } = await supabase.from('cut_records').select('*', { count: 'exact', head: true })
-          .eq('is_undo', false).eq('rating', 0).gt('detectedAt', lastTrainedAt);
+          .eq('is_undo', false).eq('rating', 0).gt('detected_at', lastTrainedAt);
+
+        console.log(`[CuttingBoard] Training summary: ${total} new records since last train (lastTrainedAt=${lastTrainedAt})`);
 
         const t = total ?? 0;
         const ur = unrated ?? 0;

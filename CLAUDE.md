@@ -34,11 +34,23 @@ Trevor May
 
 ## Progress (2026-03-29)
 1. **Mayday Shortcuts**: ✅ Working. Hotkey-based execution via SpellBook + CGEvents. User assigns hotkeys in Excalibur Settings, Mayday simulates them.
-2. **Cutting Board**: In progress — centralized cloud model registry + UI overhaul underway.
-   - ✅ Cloud Model Registry: Training runs auto-push to `autocut_models` Supabase table on every train. Personal Records panel shows ALL machines with best-model highlighting.
-   - ✅ Removed manual "Push to Cloud" merge flow (`cloudMergeTrain`). Post-train UI now shows "Automatically synced" message that auto-dismisses after 5s.
-   - ✅ Delete button visibility fix on session rows (opacity 0.4→0.6, color `text.disabled`→`text.secondary`).
+2. **Cutting Board**: In progress — training workflow rework underway.
+   - ✅ Cloud Model Registry: Training runs auto-push (awaited, not fire-and-forget) to `autocut_models` Supabase table on every train.
+   - ✅ UI restructured into 3 tabs: Cut Watcher, Cut Finder, Training (with monster animation).
+   - ✅ Session lifecycle: sessions close on CEP disconnect + orphan cleanup on plugin activation.
+   - ✅ Deleted 37 empty (0-edit) sessions from local DB.
+   - 🔧 **ACTIVE BUG — Workout Queue shows 0 data**: The `getTrainingDataSummary` IPC handler queries Supabase `cut_records` with `gt('detected_at', lastTrainedAt)` but either the column type mismatch (epoch ms vs timestamptz) or the query is failing silently. Needs debugging — add error logging, verify Supabase column types for `detected_at` and `trained_at`.
+   - 🔧 **ACTIVE BUG — Personal Records not updating after train**: May be fixed (cloud push is now awaited) but untested since the Workout Queue bug blocks training (shows 0 data).
 3. **Release-ready packaging**: Not started. Download on a new machine → all dependencies install perfectly without needing Claude Code.
+
+## Training System Design (IMPORTANT — do not deviate)
+- **Supabase is the single source of truth** for training data. All machines push cut_records to Supabase. Training pulls ALL records from cloud (all machines) and retrains from scratch.
+- **Full retrain every time** — no incremental training. brain.js model is small, training is fast, and full retrain avoids catastrophic forgetting.
+- **Workout Queue (left panel)** shows records captured SINCE last training run (cloud-wide, not local-only).
+- **Personal Records (right panel)** shows the cloud model registry (all machines).
+- **DO NOT** train on local records only. DO NOT use fire-and-forget for cloud push. DO NOT show local-only counts in the Workout Queue.
+- Sessions end when: stop-capture called, CEP panel disconnects, launcher closes, or Premiere closes.
+- Orphaned sessions (crashed without clean shutdown) are closed on plugin activation.
 
 ## Build Steps (must do after code changes)
 - Server changes: `npm run build:server` then restart launcher
