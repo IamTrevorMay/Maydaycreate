@@ -710,6 +710,12 @@ Be concise, friendly, and focused on actionable editing advice. Reference the sp
       if (ws === mainPanelWs) {
         mainPanelWs = null;
         bridge.clearCepConnection();
+
+        // End active cut watcher session when Premiere/CEP disconnects
+        const stopUrl = `http://localhost:${config.port}/api/plugins/cutting-board/command/stop-capture`;
+        fetch(stopUrl, { method: 'POST', headers: { 'Content-Type': 'application/json' } })
+          .then(() => console.log('[Mayday] Stopped cut watcher session (CEP disconnected)'))
+          .catch(() => {}); // May fail if no active session — that's fine
       }
     });
 

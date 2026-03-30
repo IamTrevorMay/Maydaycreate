@@ -99,6 +99,24 @@ export class CuttingBoardDB {
     }
   }
 
+  /** Close any sessions that were left open (ended_at IS NULL) from previous crashes/restarts */
+  closeOrphanedSessions(): number {
+    const orphans = this.db.prepare(
+      'SELECT id, total_edits FROM sessions WHERE ended_at IS NULL'
+    ).all() as Array<{ id: number; total_edits: number }>;
+
+    if (orphans.length === 0) return 0;
+
+    const stmt = this.db.prepare(
+      'UPDATE sessions SET ended_at = ? WHERE id = ?'
+    );
+    for (const s of orphans) {
+      // Set ended_at to now — the session was abandoned
+      stmt.run(Date.now(), s.id);
+    }
+    return orphans.length;
+  }
+
   createSession(sequenceId: string, sequenceName: string, videoId?: string): number {
     const stmt = this.db.prepare(
       'INSERT INTO sessions (sequence_id, sequence_name, started_at, video_id) VALUES (?, ?, ?, ?)'
@@ -536,25 +554,32 @@ export class CuttingBoardDB {
     boostedCount: number;
     badCount: number;
   } {
+    // Only count records captured SINCE the last training run
+    const lastTrain = (this.db.prepare(
+      'SELECT MAX(trained_at) as t FROM model_training_runs'
+    ).get() as { t: number | null }).t ?? 0;
+
+    const sinceFilter = 'AND detected_at > ?';
+
     const total = (this.db.prepare(
-      'SELECT COUNT(*) as c FROM cut_records WHERE is_undo = 0'
-    ).get() as { c: number }).c;
+      `SELECT COUNT(*) as c FROM cut_records WHERE is_undo = 0 ${sinceFilter}`
+    ).get(lastTrain) as { c: number }).c;
 
     const unrated = (this.db.prepare(
-      'SELECT COUNT(*) as c FROM cut_records WHERE is_undo = 0 AND rating IS NULL'
-    ).get() as { c: number }).c;
+      `SELECT COUNT(*) as c FROM cut_records WHERE is_undo = 0 AND rating IS NULL ${sinceFilter}`
+    ).get(lastTrain) as { c: number }).c;
 
     const untagged = (this.db.prepare(
-      "SELECT COUNT(*) as c FROM cut_records WHERE is_undo = 0 AND (intent_tags IS NULL OR intent_tags = '[]')"
-    ).get() as { c: number }).c;
+      `SELECT COUNT(*) as c FROM cut_records WHERE is_undo = 0 AND (intent_tags IS NULL OR intent_tags = '[]') ${sinceFilter}`
+    ).get(lastTrain) as { c: number }).c;
 
     const boosted = (this.db.prepare(
-      'SELECT COUNT(*) as c FROM cut_records WHERE is_undo = 0 AND boosted = 1'
-    ).get() as { c: number }).c;
+      `SELECT COUNT(*) as c FROM cut_records WHERE is_undo = 0 AND boosted = 1 ${sinceFilter}`
+    ).get(lastTrain) as { c: number }).c;
 
     const bad = (this.db.prepare(
-      'SELECT COUNT(*) as c FROM cut_records WHERE is_undo = 0 AND rating = 0'
-    ).get() as { c: number }).c;
+      `SELECT COUNT(*) as c FROM cut_records WHERE is_undo = 0 AND rating = 0 ${sinceFilter}`
+    ).get(lastTrain) as { c: number }).c;
 
     return {
       totalRecords: total,

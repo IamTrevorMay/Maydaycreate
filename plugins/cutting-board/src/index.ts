@@ -379,6 +379,11 @@ export default definePlugin({
 
       if (!db) {
         db = new CuttingBoardDB(ctx.dataDir);
+        // Close any sessions left open from previous crashes/restarts
+        const closed = db.closeOrphanedSessions();
+        if (closed > 0) {
+          ctx.log.info(`Closed ${closed} orphaned session(s) from previous run`);
+        }
       }
 
       // Accept optional videoId from args (YouTube URL or manual ID)
@@ -562,40 +567,48 @@ export default definePlugin({
     'train-model': async (ctx, args) => {
       if (!db) db = new CuttingBoardDB(ctx.dataDir);
 
-      const records = db.getQualityRecords();
-      const examples = records.map(r => extractFeatures(r));
+      const parsedArgs = args as {
+        cloudPool?: Array<{ editType: string; quality: string; weight: number; timestamp: number; tags: string[] }>;
+        joinedExamples?: Array<{ editType: string; quality: string; weight: number; timestamp: number; tags: string[] }>;
+      } | undefined;
 
-      // Add joined examples from Supabase (passed by launcher IPC handler)
-      const joinedExamples = (args as { joinedExamples?: Array<{ editType: string; quality: string; weight: number; timestamp: number; tags: string[] }> })?.joinedExamples;
-      if (joinedExamples && joinedExamples.length > 0) {
-        for (const je of joinedExamples) {
-          examples.push({
-            id: 0,
-            editType: je.editType,
-            quality: je.quality as 'boosted' | 'good' | 'bad',
-            weight: je.weight,
-            context: {
-              clipName: '',
-              mediaPath: '',
-              trackIndex: 0,
-              trackType: 'video',
-              editPointTime: je.timestamp,
-              beforeDuration: null,
-              afterDuration: null,
-              neighborBefore: null,
-              neighborAfter: null,
-            },
-            action: {
-              editType: je.editType,
-              deltaDuration: null,
-              deltaStart: null,
-              deltaEnd: null,
-              splitRatio: 0.5,
-            },
-            timestamp: je.timestamp * 1000, // seconds to ms
-          });
-        }
-        ctx.log.info(`Added ${joinedExamples.length} joined examples (high/medium confidence)`);
+      // If cloud pool is provided, use it as the sole training source (Supabase is source of truth)
+      // Otherwise fall back to local records (offline mode)
+      const cloudPool = parsedArgs?.cloudPool;
+      let examples: ReturnType<typeof extractFeatures>[];
+
+      if (cloudPool && cloudPool.length > 0) {
+        examples = cloudPool.map(ce => ({
+          id: 0,
+          editType: ce.editType,
+          quality: ce.quality as 'boosted' | 'good' | 'bad',
+          weight: ce.weight,
+          context: {
+            clipName: '',
+            mediaPath: '',
+            trackIndex: 0,
+            trackType: 'video',
+            editPointTime: ce.timestamp,
+            beforeDuration: null,
+            afterDuration: null,
+            neighborBefore: null,
+            neighborAfter: null,
+          },
+          action: {
+            editType: ce.editType,
+            deltaDuration: null,
+            deltaStart: null,
+            deltaEnd: null,
+            splitRatio: 0.5,
+          },
+          timestamp: ce.timestamp * 1000,
+        }));
+        ctx.log.info(`Training on ${examples.length} examples from cloud pool`);
+      } else {
+        // Offline fallback: use local records only
+        const records = db.getQualityRecords();
+        examples = records.map(r => extractFeatures(r));
+        ctx.log.info(`Training on ${examples.length} local examples (offline mode)`);
       }
 
       if (examples.length < 30) {
@@ -603,7 +616,7 @@ export default definePlugin({
         return null;
       }
 
-      ctx.log.info(`Training classifier on ${examples.length} examples (${records.length} local + ${joinedExamples?.length ?? 0} joined)...`);
+      ctx.log.info(`Training classifier on ${examples.length} examples...`);
       const { model: classifierJson, accuracy } = trainClassifier(examples);
 
       const regressorJsons: Record<string, object> = {};

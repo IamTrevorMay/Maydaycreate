@@ -473,13 +473,71 @@ export function registerCuttingBoardHandlers(): void {
   ipcMain.handle('cuttingBoard:trainModel', async () => {
     const config = loadConfig();
 
-    // Fetch training data from Supabase to augment local training data
-    let joinedExamples: Array<{ editType: string; quality: string; weight: number; timestamp: number; tags: string[] }> = [];
+    // Step 1: Push unsynced local records to Supabase before training
+    // This ensures the cloud pool has our latest data
+    if (config.supabaseUrl && config.supabaseAnonKey) {
+      try {
+        const serverBase = `http://localhost:${config.serverPort}/api/plugins/cutting-board/command`;
+        const syncRes = await fetch(`${serverBase}/sync-data`, {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+        });
+        if (syncRes.ok) {
+          const syncData = await syncRes.json();
+          const data = syncData.success ? syncData.result : null;
+          if (data?.sessions?.length > 0 || data?.records?.length > 0) {
+            const supabase = createClient(config.supabaseUrl, config.supabaseAnonKey);
+            // Push sessions
+            if (data.sessions?.length > 0) {
+              await supabase.from('sessions').upsert(data.sessions.map((s: any) => ({
+                local_id: s.id, machine_id: config.machineId, machine_name: config.machineName,
+                sequence_id: s.sequenceId, sequence_name: s.sequenceName,
+                session_name: s.sessionName, started_at: s.startedAt, ended_at: s.endedAt,
+                total_edits: s.totalEdits, video_id: s.videoId,
+              })), { onConflict: 'machine_id,local_id' });
+            }
+            // Push records
+            if (data.records?.length > 0) {
+              const BATCH = 500;
+              for (let i = 0; i < data.records.length; i += BATCH) {
+                const batch = data.records.slice(i, i + BATCH).map((r: any) => ({
+                  local_id: r.id, machine_id: config.machineId, session_local_id: r.sessionId,
+                  edit_type: r.editType, edit_point_time: r.editPointTime,
+                  clipName: r.clipName, mediaPath: r.mediaPath,
+                  trackIndex: r.trackIndex, trackType: r.trackType,
+                  rating: r.rating, isUndo: r.isUndo, boosted: r.boosted,
+                  intent_tags: r.intentTags, detectedAt: r.detectedAt,
+                  video_id: data.sessions?.find((s: any) => s.id === r.sessionId)?.videoId ?? null,
+                }));
+                await supabase.from('cut_records').upsert(batch, { onConflict: 'machine_id,local_id' });
+              }
+            }
+            // Mark as synced
+            await fetch(`${serverBase}/mark-synced`, {
+              method: 'POST', headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                table: 'sessions', ids: data.sessions?.map((s: any) => s.id) ?? [],
+              }),
+            });
+            await fetch(`${serverBase}/mark-synced`, {
+              method: 'POST', headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                table: 'cut_records', ids: data.records?.map((r: any) => r.id) ?? [],
+              }),
+            });
+            console.log(`[CuttingBoard] Pre-train sync: ${data.sessions?.length ?? 0} sessions, ${data.records?.length ?? 0} records pushed to Supabase`);
+          }
+        }
+      } catch (err) {
+        console.error('[CuttingBoard] Pre-train sync failed (continuing with cloud data as-is):', err);
+      }
+    }
+
+    // Step 2: Pull ALL cut_records from Supabase as the single source of truth
+    let cloudPool: Array<{ editType: string; quality: string; weight: number; timestamp: number; tags: string[] }> = [];
     if (config.supabaseUrl && config.supabaseAnonKey) {
       try {
         const supabase = createClient(config.supabaseUrl, config.supabaseAnonKey);
 
-        // Pull cut_records from Supabase (these may not exist in the local plugin DB)
         const { data: cutRows } = await supabase
           .from('cut_records')
           .select('edit_type, edit_point_time, rating, boosted, is_undo, intent_tags')
@@ -491,7 +549,7 @@ export function registerCuttingBoardHandlers(): void {
             const rating = r.rating as number | null;
             const quality = boosted ? 'boosted' : rating === 1 ? 'good' : rating === 0 ? 'bad' : 'good';
             if (quality === 'bad') continue;
-            joinedExamples.push({
+            cloudPool.push({
               editType: r.edit_type as string,
               quality,
               weight: boosted ? 3.0 : 1.0,
@@ -499,43 +557,19 @@ export function registerCuttingBoardHandlers(): void {
               tags: Array.isArray(r.intent_tags) ? r.intent_tags as string[] : [],
             });
           }
-          console.log(`[CuttingBoard] Fetched ${joinedExamples.length} cut_records from Supabase for training`);
-        }
-
-        // Also pull joined records
-        const { data: joinedRows } = await supabase
-          .from('cutting_board_joined')
-          .select('timestamp, matched, merged_tags, model_a_rating, confidence_tier')
-          .in('confidence_tier', ['high', 'medium']);
-
-        if (joinedRows && joinedRows.length > 0) {
-          const before = joinedExamples.length;
-          for (const r of joinedRows) {
-            const tier = r.confidence_tier as string;
-            const weight = tier === 'high' ? 3.0 : 1.0;
-            const rating = r.model_a_rating as string | null;
-            const quality = rating === 'boost' ? 'boosted' : rating === 'bad' ? 'bad' : 'good';
-            if (quality === 'bad') continue;
-            joinedExamples.push({
-              editType: 'cut',
-              quality,
-              weight,
-              timestamp: r.timestamp as number,
-              tags: Array.isArray(r.merged_tags) ? r.merged_tags as string[] : [],
-            });
-          }
-          console.log(`[CuttingBoard] Added ${joinedExamples.length - before} joined examples for training`);
+          console.log(`[CuttingBoard] Training pool: ${cloudPool.length} records from Supabase (all machines)`);
         }
       } catch (err) {
-        console.error('[CuttingBoard] Failed to fetch Supabase training data:', err);
+        console.error('[CuttingBoard] Failed to fetch cloud training pool:', err);
       }
     }
 
+    // Step 3: Train — cloud pool is source of truth; falls back to local if no Supabase
     const url = `http://localhost:${config.serverPort}/api/plugins/cutting-board/command/train-model`;
     const res = await fetch(url, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ joinedExamples }),
+      body: JSON.stringify(cloudPool.length > 0 ? { cloudPool } : {}),
     });
     if (!res.ok) throw new Error(`Train model failed: ${res.status}`);
     const data = await res.json();
