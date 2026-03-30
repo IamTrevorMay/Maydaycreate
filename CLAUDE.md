@@ -32,8 +32,11 @@ Trevor May
 ## TODO
 - Add a `postinstall` script to package.json that auto-rebuilds better-sqlite3 for Electron after every `npm install`, so the ABI conflict is handled automatically.
 
-## Progress (2026-03-29)
+## Progress (2026-03-30)
 1. **Mayday Shortcuts**: ✅ Working. Hotkey-based execution via SpellBook + CGEvents. User assigns hotkeys in Excalibur Settings, Mayday simulates them.
+   - ✅ Renamed CEP panel from "Mayday Stream Deck" → "Mayday Shortcuts" (HTML title + built manifest).
+   - **IMPORTANT**: After assigning hotkeys in Excalibur Settings, **Premiere must be restarted** for Excalibur to reload SpellBook and activate the bindings. Without restart, hotkeys won't fire even though SpellBook JSON is updated.
+   - The built manifest at `dist/cep/CSXS/manifest.xml` can get stale — `cp -R` in the build script doesn't always overwrite. Force-copy with `cp -f` if the menu name is wrong.
 2. **Cutting Board**: In progress — training workflow rework underway.
    - ✅ Cloud Model Registry: Training runs auto-push (awaited, not fire-and-forget) to `autocut_models` Supabase table on every train.
    - ✅ UI restructured into 3 tabs: Cut Watcher, Cut Finder, Training (with monster animation).
