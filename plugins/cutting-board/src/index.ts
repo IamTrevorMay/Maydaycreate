@@ -277,6 +277,12 @@ export default definePlugin({
   async activate(ctx) {
     db = new CuttingBoardDB(ctx.dataDir);
 
+    // Close any sessions left open from previous crashes/restarts
+    const closed = db.closeOrphanedSessions();
+    if (closed > 0) {
+      ctx.log.info(`Closed ${closed} orphaned session(s) from previous run`);
+    }
+
     // Listen for boost requests from panel/hotkey
     eventSubs.push(ctx.onEvent('plugin:cutting-board:boost', (data) => {
       const { recordId } = data as { recordId: number };
@@ -379,11 +385,6 @@ export default definePlugin({
 
       if (!db) {
         db = new CuttingBoardDB(ctx.dataDir);
-        // Close any sessions left open from previous crashes/restarts
-        const closed = db.closeOrphanedSessions();
-        if (closed > 0) {
-          ctx.log.info(`Closed ${closed} orphaned session(s) from previous run`);
-        }
       }
 
       // Accept optional videoId from args (YouTube URL or manual ID)

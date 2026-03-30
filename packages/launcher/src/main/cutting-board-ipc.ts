@@ -575,39 +575,37 @@ export function registerCuttingBoardHandlers(): void {
     const data = await res.json();
     const trainResult = data.success ? data.result : data;
 
-    // Auto-push to cloud registry (fire-and-forget)
+    // Push to cloud registry (awaited so UI refresh sees the new model)
     if (config.supabaseUrl && config.supabaseAnonKey && trainResult?.version != null) {
-      (async () => {
-        try {
-          const supabase = createClient(config.supabaseUrl!, config.supabaseAnonKey!);
-          const serverBase = `http://localhost:${config.serverPort}/api/plugins/cutting-board/command`;
-          const modelRes = await fetch(`${serverBase}/get-model-data`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-          });
-          if (modelRes.ok) {
-            const modelData = await modelRes.json();
-            if (modelData.success && modelData.result) {
-              const model = modelData.result;
-              await supabase
-                .from('autocut_models')
-                .upsert({
-                  machine_id: config.machineId,
-                  machine_name: config.machineName,
-                  version: model.version,
-                  trained_at: model.trainedAt,
-                  training_size: model.trainingSize,
-                  accuracy: model.accuracy,
-                  model_json: { classifier: model.classifier, regressors: model.regressors },
-                  uploaded_at: new Date().toISOString(),
-                }, { onConflict: 'machine_id,version' });
-              console.log(`[CuttingBoard] Auto-pushed model v${model.version} to cloud registry`);
-            }
+      try {
+        const supabase = createClient(config.supabaseUrl, config.supabaseAnonKey);
+        const serverBase = `http://localhost:${config.serverPort}/api/plugins/cutting-board/command`;
+        const modelRes = await fetch(`${serverBase}/get-model-data`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+        });
+        if (modelRes.ok) {
+          const modelData = await modelRes.json();
+          if (modelData.success && modelData.result) {
+            const model = modelData.result;
+            await supabase
+              .from('autocut_models')
+              .upsert({
+                machine_id: config.machineId,
+                machine_name: config.machineName,
+                version: model.version,
+                trained_at: model.trainedAt,
+                training_size: model.trainingSize,
+                accuracy: model.accuracy,
+                model_json: { classifier: model.classifier, regressors: model.regressors },
+                uploaded_at: new Date().toISOString(),
+              }, { onConflict: 'machine_id,version' });
+            console.log(`[CuttingBoard] Pushed model v${model.version} to cloud registry`);
           }
-        } catch (err) {
-          console.error('[CuttingBoard] Auto-push to cloud failed:', err);
         }
-      })();
+      } catch (err) {
+        console.error('[CuttingBoard] Cloud push failed:', err);
+      }
     }
 
     return trainResult;
@@ -845,9 +843,70 @@ export function registerCuttingBoardHandlers(): void {
   });
 
   ipcMain.handle('cuttingBoard:getTrainingDataSummary', async () => {
-    // Try server plugin API first
+    const config = loadConfig();
+
+    // Get the last training timestamp (from cloud registry or local)
+    let lastTrainedAt = 0;
+    if (config.supabaseUrl && config.supabaseAnonKey) {
+      try {
+        const supabase = createClient(config.supabaseUrl, config.supabaseAnonKey);
+        const { data } = await supabase
+          .from('autocut_models')
+          .select('trained_at')
+          .order('trained_at', { ascending: false })
+          .limit(1);
+        if (data && data.length > 0) {
+          lastTrainedAt = data[0].trained_at as number;
+        }
+      } catch {}
+    }
+    if (lastTrainedAt === 0) {
+      // Fall back to local training runs
+      const db = openDb();
+      if (db) {
+        try {
+          const row = db.prepare('SELECT MAX(trained_at) as t FROM model_training_runs').get() as { t: number | null };
+          lastTrainedAt = row?.t ?? 0;
+        } finally { db.close(); }
+      }
+    }
+
+    // Query Supabase for cloud-wide counts since last train
+    if (config.supabaseUrl && config.supabaseAnonKey) {
+      try {
+        const supabase = createClient(config.supabaseUrl, config.supabaseAnonKey);
+        const base = supabase.from('cut_records').select('*', { count: 'exact', head: true }).eq('is_undo', false);
+
+        const { count: total } = await supabase.from('cut_records').select('*', { count: 'exact', head: true })
+          .eq('is_undo', false).gt('detectedAt', lastTrainedAt);
+        const { count: unrated } = await supabase.from('cut_records').select('*', { count: 'exact', head: true })
+          .eq('is_undo', false).is('rating', null).gt('detectedAt', lastTrainedAt);
+        const { count: untagged } = await supabase.from('cut_records').select('*', { count: 'exact', head: true })
+          .eq('is_undo', false).or('intent_tags.is.null,intent_tags.eq.[]').gt('detectedAt', lastTrainedAt);
+        const { count: boosted } = await supabase.from('cut_records').select('*', { count: 'exact', head: true })
+          .eq('is_undo', false).eq('boosted', true).gt('detectedAt', lastTrainedAt);
+        const { count: bad } = await supabase.from('cut_records').select('*', { count: 'exact', head: true })
+          .eq('is_undo', false).eq('rating', 0).gt('detectedAt', lastTrainedAt);
+
+        const t = total ?? 0;
+        const ur = unrated ?? 0;
+        const ut = untagged ?? 0;
+        return {
+          totalRecords: t,
+          ratedCount: t - ur,
+          unratedCount: ur,
+          taggedCount: t - ut,
+          untaggedCount: ut,
+          boostedCount: boosted ?? 0,
+          badCount: bad ?? 0,
+        };
+      } catch (err) {
+        console.error('[CuttingBoard] Cloud training summary failed, falling back to local:', err);
+      }
+    }
+
+    // Fall back to local plugin API
     try {
-      const config = loadConfig();
       const url = `http://localhost:${config.serverPort}/api/plugins/cutting-board/command/training-data-summary`;
       const res = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' } });
       if (res.ok) {
@@ -856,27 +915,7 @@ export function registerCuttingBoardHandlers(): void {
       }
     } catch {}
 
-    // Fall back to direct SQLite read
-    const db = openDb();
-    if (!db) return null;
-    try {
-      const total = (db.prepare('SELECT COUNT(*) as c FROM cut_records WHERE is_undo = 0').get() as { c: number }).c;
-      const unrated = (db.prepare('SELECT COUNT(*) as c FROM cut_records WHERE is_undo = 0 AND rating IS NULL').get() as { c: number }).c;
-      const untagged = (db.prepare("SELECT COUNT(*) as c FROM cut_records WHERE is_undo = 0 AND (intent_tags IS NULL OR intent_tags = '[]')").get() as { c: number }).c;
-      const boosted = (db.prepare('SELECT COUNT(*) as c FROM cut_records WHERE is_undo = 0 AND boosted = 1').get() as { c: number }).c;
-      const bad = (db.prepare('SELECT COUNT(*) as c FROM cut_records WHERE is_undo = 0 AND rating = 0').get() as { c: number }).c;
-      return {
-        totalRecords: total,
-        ratedCount: total - unrated,
-        unratedCount: unrated,
-        taggedCount: total - untagged,
-        untaggedCount: untagged,
-        boostedCount: boosted,
-        badCount: bad,
-      };
-    } finally {
-      db.close();
-    }
+    return null;
   });
 
   // ── Cut Finder IPC handlers ─────────────────────────────────────────────
