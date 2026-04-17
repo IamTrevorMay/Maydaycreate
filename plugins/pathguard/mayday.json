@@ -1,0 +1,61 @@
+{
+  "id": "pathguard",
+  "name": "PathGuard",
+  "version": "0.1.0",
+  "description": "Dynamic file path management via symlink indirection. Prevents broken media links when files are moved or renamed.",
+  "main": "src/index.ts",
+  "targetApp": "premiere",
+  "ui": {
+    "page": true,
+    "sidebarLabel": "PathGuard",
+    "sidebarOrder": 200
+  },
+  "marketplace": {
+    "category": "utility",
+    "tags": ["media", "paths", "symlinks", "relinking"]
+  },
+  "commands": [
+    {
+      "id": "scan-project",
+      "name": "Scan Project",
+      "description": "Scan the active project for new media imports"
+    },
+    {
+      "id": "get-status",
+      "name": "Get Status",
+      "description": "Get PathGuard tracking status for the current project"
+    },
+    {
+      "id": "reconcile",
+      "name": "Reconcile Symlinks",
+      "description": "Verify and repair all managed symlinks against DB state"
+    }
+  ],
+  "config": {
+    "scanInterval": {
+      "type": "number",
+      "label": "Scan Interval (ms)",
+      "default": 2000,
+      "description": "How often to poll the project tree for new imports"
+    },
+    "symlinkRoot": {
+      "type": "string",
+      "label": "Symlink Directory",
+      "default": "~/MaydayMedia/pathguard",
+      "description": "Root directory where managed symlinks are created"
+    },
+    "watchPaths": {
+      "type": "string",
+      "label": "Watch Paths",
+      "default": "",
+      "description": "Comma-separated directories for the daemon to monitor for file moves"
+    },
+    "refreshMediaAfterRelink": {
+      "type": "boolean",
+      "label": "Refresh Media After Relink",
+      "default": true,
+      "description": "Call refreshMedia() after changeMediaPath(). Disable if causing issues in your Premiere version."
+    }
+  },
+  "permissions": ["media", "filesystem"]
+}

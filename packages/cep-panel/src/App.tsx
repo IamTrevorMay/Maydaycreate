@@ -5,6 +5,7 @@ import { CutFeedbackWidget } from './components/CutFeedbackWidget.js';
 import { VideoIdBar } from './components/VideoIdBar.js';
 import { AgentPanel } from './components/AgentPanel.js';
 import { PresetVaultPanel } from './components/PresetVaultPanel.js';
+import { PathGuardPanel } from './components/PathGuardPanel.js';
 
 export function App() {
   const { connected, serverStatus, send, onMessage } = useWebSocket();
@@ -35,6 +36,7 @@ export function App() {
         <PluginManager />
         <PresetVaultPanel onMessage={onMessage} />
         <AgentPanel onMessage={onMessage} send={send} />
+        <PathGuardPanel onMessage={onMessage} send={send} />
       </main>
       <CutFeedbackWidget onMessage={onMessage} send={send} />
     </div>
