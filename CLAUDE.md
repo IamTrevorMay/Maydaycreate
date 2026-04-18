@@ -93,6 +93,13 @@ Trevor May
 
 **Non-goals for v1**: Windows support, multi-machine DB sync, UI polish, retroactive relinking of existing projects, Dynamic Link/AE integration, proxy workflows.
 
+### PathGuard — Paused 2026-04-18
+- **Status**: Paused at start of Step 2.
+- **Next concrete action when resuming**: Add a dev-only "Test Scan" button to `PathGuardPanel.tsx` that uses `CSInterface.evalScript` to load `plugins/pathguard/extendscript/pathguard.jsx` via `$.evalFile()` and calls `MaydayPathGuard.scanProject()` directly. Display item count, projectPath, and first few results. This bypasses the server stub — server bridge is Step 3.
+- **Test against**: A real Premiere project with varied bins, nested folders, offline media, and sequences to exercise edge cases in `walkItem()` (bins recurse, sequences skipped, offline throws on `getMediaPath`).
+- **Known**: Scanner `MaydayPathGuard.scanProject()` is written but untested in Premiere. Server command `scan-project` is still a stub.
+- **Parking note — main branch stash**: `stash@{0}` on main holds Excalibur preset keyframe remap + value resolution WIP from 2026-03-28 (`effects.jsx`, `excalibur-executor.ts`). Unrelated to PathGuard; pop when returning to Excalibur work.
+
 ## Build Steps (must do after code changes)
 - Server changes: `npm run build:server` then restart launcher
 - CEP panel changes: `npm run build:cep` then restart Premiere
