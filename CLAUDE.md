@@ -100,6 +100,51 @@ Trevor May
 - **Known**: Scanner `MaydayPathGuard.scanProject()` is written but untested in Premiere. Server command `scan-project` is still a stub.
 - **Parking note — main branch stash**: `stash@{0}` on main holds Excalibur preset keyframe remap + value resolution WIP from 2026-03-28 (`effects.jsx`, `excalibur-executor.ts`). Unrelated to PathGuard; pop when returning to Excalibur work.
 
+## Bug Fix Audit (2026-04-24)
+
+Full codebase security and reliability audit completed. **33 bugs fixed** in commit `ba058e0` on `feature/pathguard`, across 31 files. Both `build:server` and `build:cep` pass clean.
+
+### Critical Fixes (6)
+1. **Infinite recursion in `detectSilence`** — `media.ts` catch block recursed with same args on stderr match; now parses stderr directly.
+2. **`lstatSync` crash** — `install.ts` called lstatSync on non-existent path; wrapped in try-catch.
+3. **`eval()` in JSON polyfill** — `json2.jsx` used `eval("(" + text + ")")` for JSON.parse; replaced with safe recursive-descent parser (ES3-compatible).
+4. **Shell injection in curl** — `excalibur.ts` interpolated presetId into shell command; added UUID format validation.
+5. **Path traversal in sync merger** — `merger.ts` had no validation on `diff.relativePath`; added `safePath()` helper.
+6. **Path traversal in preset storage** — `storage.ts` used presetId in path.join unsafely; added `SAFE_ID_RE` validation.
+
+### High Fixes (7)
+7. **Uncleared `setInterval`** — `server-bridge.ts` never cleared status interval; now stored and cleared on stop.
+8. **Errored plugin blocks reload** — `lifecycle.ts` kept errored entries in map; now deletes on failure.
+9. **SQL table name interpolation** — `db.ts` interpolated `table` param; added whitelist check.
+10. **StreamDeck `setMode` race** — `streamdeck-hardware.ts` fired async renders without awaiting; added render queue.
+11. **Optimistic mode update** — `StreamDeckApp.tsx` set mode before server confirmed; removed, relies on server response.
+12. **Hardcoded config path** — `config-store.ts` had machine-specific path; changed to empty string default.
+13. **Hardcoded CLI version/port** — `index.ts`, `enable.ts`, `disable.ts`; reads from package.json, added `--port` option.
+
+### Medium Fixes (20)
+14. **Temp file collision** — `whisper.ts` used `Date.now()` for two files in same tick; added random suffix.
+15. **Missing `destroyTray`** — `index.ts` never called destroyTray on quit; added to before-quit handler.
+16. **Auto-sync blocks handlers** — `cutting-board-ipc.ts` startCutWatcherAutoSync could throw, skipping all handler registration; isolated in own try-catch.
+17. **Silent catch** — `cutting-board-ipc.ts` empty catch in getTrainingDataSummary; added logging.
+18. **Timeout leak** — `auto-updater.ts` Promise.race timeout never cleared; now cleared in finally.
+19. **Protocol path overlap** — `plugin-page-protocol.ts` startsWith without path.sep; added separator check.
+20. **Empty youtu.be ID** — `VideoIdBar.tsx` returned full URL for bare youtu.be/; returns empty string.
+21. **Toast timer reset** — `Toast.tsx` onClose in deps caused resets; removed from dependency array.
+22. **Stale dropdown on mode switch** — `StreamDeckGrid.tsx` activeSlot not cleared; added useEffect.
+23. **Build error suppressed** — `build.ts` stdio:pipe hid errors; now logs stderr/stdout.
+24. **Missing source check** — `build.js` no validation before reading ExtendScript files; added existence check.
+25. **Empty plugin name** — `create.ts` no validation; added name checks.
+26. **Malformed manifest crash** — `list.ts` JSON.parse without try-catch; wrapped with warning.
+27. **Unsafe JSON.parse** — `excalibur-executor.ts` cmdlist/preset parsing; wrapped in try-catch.
+28. **Dedup precision** — `diff.ts` toFixed(1) too coarse (100ms); changed to toFixed(2) (10ms).
+29. **Null tag crash** — `pipeline.ts` JSON.parse('null') returns null; added nullish coalescing + Array.isArray guard.
+30. **Non-atomic writes** — `storage.ts` writeFileSync can corrupt; now writes to .tmp then renames.
+31. **Duplicate API call** — `audit-excalibur.mjs` called clip/properties twice; removed unused second call.
+32. **Silent sync errors** — `index.ts` pushChanges catch swallowed errors; added error logging.
+
+### Assessed & Skipped (not bugs)
+scanner.ts lazy hash (perf tradeoff), streamdeck-config.ts type assertion (validated), ai.ts textBlock (runtime-safe), websocket.ts reconnect (handled by onclose), StreamDeckGrid drag null (guarded), install-cep.sh sudo (set -e), timeline.jsx clip index (bounds-checked), sdk/ui.ts postMessage '*' (required for Electron), keystroke-simulator.ts permissions (EACCES rejected), model.ts tag vector (full retrain design), registry.ts concurrent (synchronous sqlite3), doctor.ts macOS paths (v1 by design).
+
 ## Build Steps (must do after code changes)
 - Server changes: `npm run build:server` then restart launcher
 - CEP panel changes: `npm run build:cep` then restart Premiere
