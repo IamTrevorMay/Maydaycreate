@@ -4,6 +4,7 @@ import type { EffectPreset, PresetIndexEntry, PresetLibraryIndex, PresetFolder }
 
 const INDEX_FILE = 'index.json';
 const PRESETS_DIR = 'presets';
+const SAFE_ID_RE = /^[a-zA-Z0-9_-]+$/;
 
 function ensureDirs(baseDir: string) {
   const presetsDir = path.join(baseDir, PRESETS_DIR);
@@ -55,9 +56,11 @@ function buildFolders(presets: PresetIndexEntry[]): PresetFolder[] {
 export function savePreset(baseDir: string, preset: EffectPreset): PresetIndexEntry {
   ensureDirs(baseDir);
 
-  // Write preset file
+  // Write preset file atomically (write to temp, then rename)
   const presetPath = path.join(baseDir, PRESETS_DIR, `${preset.id}.json`);
-  fs.writeFileSync(presetPath, JSON.stringify(preset, null, 2));
+  const tmpPath = presetPath + '.tmp';
+  fs.writeFileSync(tmpPath, JSON.stringify(preset, null, 2));
+  fs.renameSync(tmpPath, presetPath);
 
   // Update index
   const index = loadIndex(baseDir);
@@ -86,6 +89,7 @@ export function savePreset(baseDir: string, preset: EffectPreset): PresetIndexEn
 }
 
 export function loadPreset(baseDir: string, presetId: string): EffectPreset | null {
+  if (!SAFE_ID_RE.test(presetId)) throw new Error(`Invalid presetId: ${presetId}`);
   const presetPath = path.join(baseDir, PRESETS_DIR, `${presetId}.json`);
   if (!fs.existsSync(presetPath)) return null;
   try {
@@ -96,6 +100,7 @@ export function loadPreset(baseDir: string, presetId: string): EffectPreset | nu
 }
 
 export function deletePreset(baseDir: string, presetId: string): boolean {
+  if (!SAFE_ID_RE.test(presetId)) throw new Error(`Invalid presetId: ${presetId}`);
   const presetPath = path.join(baseDir, PRESETS_DIR, `${presetId}.json`);
   if (!fs.existsSync(presetPath)) return false;
 

@@ -46,7 +46,7 @@ export function registerPluginProtocolHandler(): void {
     // Prevent path traversal
     const resolved = path.resolve(pluginsDir, pluginId, filePath.replace(/^\//, ''));
     const pluginRoot = path.resolve(pluginsDir, pluginId);
-    if (!resolved.startsWith(pluginRoot)) {
+    if (!resolved.startsWith(pluginRoot + path.sep) && resolved !== pluginRoot) {
       return new Response('Forbidden', { status: 403 });
     }
 

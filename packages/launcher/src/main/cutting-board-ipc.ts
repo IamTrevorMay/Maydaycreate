@@ -389,7 +389,9 @@ export function registerCuttingBoardHandlers(): void {
   try {
 
   // Start auto-sync for cut watcher data
-  startCutWatcherAutoSync();
+  try { startCutWatcherAutoSync(); } catch (err) {
+    console.error('[CuttingBoard] Failed to start auto-sync:', err);
+  }
 
   ipcMain.handle('cuttingBoard:getAggregateStats', async () => {
     try {
@@ -860,7 +862,9 @@ export function registerCuttingBoardHandlers(): void {
           const raw = data[0].trained_at;
           lastTrainedAt = typeof raw === 'string' ? new Date(raw).getTime() : (raw as number);
         }
-      } catch {}
+      } catch (err) {
+        console.error('[CuttingBoard] Failed to fetch last trained_at from Supabase:', err);
+      }
     }
     if (lastTrainedAt === 0) {
       const db = openDb();

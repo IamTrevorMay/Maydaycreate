@@ -126,7 +126,7 @@ export class PluginLifecycle {
       console.log(`[Lifecycle] Loaded: ${manifest.name} v${manifest.version}`);
     } catch (err) {
       entry.status = 'errored';
-      this.plugins.set(manifest.id, entry);
+      this.plugins.delete(manifest.id);
       throw err;
     }
   }

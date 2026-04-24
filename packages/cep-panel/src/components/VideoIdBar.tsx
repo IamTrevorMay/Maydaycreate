@@ -17,7 +17,8 @@ function parseVideoId(input: string): string {
       return url.searchParams.get('v') || trimmed;
     }
     if (url.hostname === 'youtu.be') {
-      return url.pathname.slice(1).split('/')[0] || trimmed;
+      const id = url.pathname.slice(1).split('/')[0];
+      return id || '';
     }
   } catch {
     // Not a URL — treat as manual ID

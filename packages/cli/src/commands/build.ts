@@ -22,8 +22,12 @@ export const buildCommand = new Command('build')
       try {
         execSync(step.cmd, { cwd: root, stdio: 'pipe' });
         console.log(`  ✓ ${step.name}`);
-      } catch (err) {
+      } catch (err: any) {
+        const stderr = err?.stderr?.toString?.()?.trim?.() || '';
+        const stdout = err?.stdout?.toString?.()?.trim?.() || '';
         console.error(`  ✗ ${step.name} failed`);
+        if (stderr) console.error(`    stderr: ${stderr.slice(0, 500)}`);
+        if (stdout) console.error(`    stdout: ${stdout.slice(0, 500)}`);
         throw err;
       }
     }

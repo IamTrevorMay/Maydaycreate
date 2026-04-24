@@ -319,11 +319,7 @@ async function main() {
       console.error('Make sure Premiere is open, CEP panel is connected, and a clip is selected.');
       process.exit(1);
     }
-    console.log(`Connected to Premiere. Selected clip: "${clipCheck.capture.clipName}"`);
-
-    // Read sequence dimensions
-    const seqInfo = await api('GET', '/api/clip/properties');
-    console.log(`\n`);
+    console.log(`Connected to Premiere. Selected clip: "${clipCheck.capture.clipName}"\n`);
   }
 
   // ── Phase 1: Static Analysis ────────────────────────────────────────────

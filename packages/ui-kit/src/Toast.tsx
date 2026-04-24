@@ -12,7 +12,8 @@ export function Toast({ message, type = 'info', onClose, duration = 4000 }: Toas
   useEffect(() => {
     const timer = setTimeout(onClose, duration);
     return () => clearTimeout(timer);
-  }, [onClose, duration]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [duration]);
 
   const colorMap = {
     info: { bg: theme.colors.status.infoBg, text: theme.colors.status.info },

@@ -220,10 +220,15 @@ export async function downloadAndInstallUpdate(): Promise<void> {
       });
     }
 
-    const timeout = new Promise<never>((_, reject) =>
-      setTimeout(() => reject(new Error('Update download timed out after 120s')), 120_000),
-    );
-    await Promise.race([autoUpdater.downloadUpdate(), timeout]);
+    let timeoutId: ReturnType<typeof setTimeout>;
+    const timeout = new Promise<never>((_, reject) => {
+      timeoutId = setTimeout(() => reject(new Error('Update download timed out after 120s')), 120_000);
+    });
+    try {
+      await Promise.race([autoUpdater.downloadUpdate(), timeout]);
+    } finally {
+      clearTimeout(timeoutId!);
+    }
   } finally {
     _updating = false;
   }

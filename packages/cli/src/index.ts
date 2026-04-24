@@ -1,4 +1,5 @@
 import { Command } from 'commander';
+import { createRequire } from 'module';
 import { createCommand } from './commands/create.js';
 import { devCommand } from './commands/dev.js';
 import { buildCommand } from './commands/build.js';
@@ -8,12 +9,15 @@ import { disableCommand } from './commands/disable.js';
 import { installCommand } from './commands/install.js';
 import { doctorCommand } from './commands/doctor.js';
 
+const require = createRequire(import.meta.url);
+const pkg = require('../package.json');
+
 const program = new Command();
 
 program
   .name('mayday')
   .description('Mayday Create — Plugin development platform for Adobe Premiere Pro')
-  .version('0.1.0');
+  .version(pkg.version);
 
 program.addCommand(createCommand);
 program.addCommand(devCommand);

@@ -668,15 +668,25 @@ export async function executeExcaliburCommand(
     return { success: false, error: 'Excalibur .cmdlist.json not found' };
   }
 
-  const cmdlist = JSON.parse(fs.readFileSync(cmdlistPath, 'utf-8'));
+  let cmdlist: any;
+  try {
+    cmdlist = JSON.parse(fs.readFileSync(cmdlistPath, 'utf-8'));
+  } catch (err) {
+    return { success: false, error: `Failed to parse .cmdlist.json: ${err instanceof Error ? err.message : String(err)}` };
+  }
   const userCmd = cmdlist?.us?.[commandName];
   if (!userCmd) {
     return { success: false, error: `Command "${commandName}" not found` };
   }
 
-  const presets = fs.existsSync(presetPath)
-    ? JSON.parse(fs.readFileSync(presetPath, 'utf-8'))
-    : {};
+  let presets: any = {};
+  if (fs.existsSync(presetPath)) {
+    try {
+      presets = JSON.parse(fs.readFileSync(presetPath, 'utf-8'));
+    } catch {
+      console.error('[Excalibur] Failed to parse .presetaction.json');
+    }
+  }
 
   const modules = userCmd.modules ?? {};
   if (Object.keys(modules).length === 0) {

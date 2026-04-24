@@ -98,6 +98,12 @@ export function StreamDeckGrid({ connected, send, onMessage, mode }: Props) {
     }
   }, [activeSlot, connected, send]);
 
+  // Clear active/customize slots on mode change
+  useEffect(() => {
+    setActiveSlot(null);
+    setCustomizeSlot(null);
+  }, [mode]);
+
   // Decide whether dropdown should open upward or downward
   useEffect(() => {
     if (activeSlot !== null && activeButtonRef.current) {

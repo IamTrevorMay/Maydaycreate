@@ -19,6 +19,7 @@ export interface ServerBridge {
 
 let _bridge: ServerBridge | null = null;
 let _statusListeners: Array<(status: ServerStatus) => void> = [];
+let _statusInterval: ReturnType<typeof setInterval> | null = null;
 
 function makeStatus(): ServerStatus {
   if (!serverInstance) {
@@ -106,7 +107,7 @@ export async function startEmbeddedServer(opts: {
   emitStatus();
 
   // Periodically emit status so renderer stays in sync
-  setInterval(emitStatus, 5000);
+  _statusInterval = setInterval(emitStatus, 5000);
 
   return _bridge;
 }
@@ -120,6 +121,10 @@ export function getServerBridge(): ServerBridge | null {
  * subprocess so the process can exit cleanly (no "quit unexpectedly" dialog).
  */
 export function stopEmbeddedServer(): void {
+  if (_statusInterval) {
+    clearInterval(_statusInterval);
+    _statusInterval = null;
+  }
   if (!serverInstance) return;
   try {
     serverInstance.streamDeckHardware?.stop?.();

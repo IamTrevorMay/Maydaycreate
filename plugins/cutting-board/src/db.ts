@@ -481,6 +481,9 @@ export class CuttingBoardDB {
   }
 
   markSynced(table: 'sessions' | 'cut_records', ids: number[]): void {
+    if (table !== 'sessions' && table !== 'cut_records') {
+      throw new Error(`Invalid table name: ${table}`);
+    }
     if (ids.length === 0) return;
     const now = Date.now();
     const placeholders = ids.map(() => '?').join(',');

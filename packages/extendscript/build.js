@@ -10,7 +10,12 @@ const files = ['json2.jsx', 'utils.jsx', 'project.jsx', 'timeline.jsx', 'markers
 let output = '// Mayday Create - ExtendScript Bundle\n// Auto-generated - do not edit\n\n';
 
 for (const file of files) {
-  const content = fs.readFileSync(path.join(srcDir, file), 'utf8');
+  const filePath = path.join(srcDir, file);
+  if (!fs.existsSync(filePath)) {
+    console.error('Missing ExtendScript source file: ' + filePath);
+    process.exit(1);
+  }
+  const content = fs.readFileSync(filePath, 'utf8');
   output += '// === ' + file + ' ===\n' + content + '\n\n';
 }
 

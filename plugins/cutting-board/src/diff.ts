@@ -253,7 +253,7 @@ function deduplicateLinked(changes: EditChange[]): EditChange[] {
   });
 
   for (const c of sorted) {
-    const timeKey = (Math.round(c.editPointTime * 10) / 10).toFixed(1);
+    const timeKey = (Math.round(c.editPointTime * 100) / 100).toFixed(2);
     const dedupeKey = `${c.editType}|${timeKey}`;
     if (!seen.has(dedupeKey)) {
       seen.set(dedupeKey, c);

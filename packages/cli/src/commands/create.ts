@@ -68,7 +68,15 @@ export const createCommand = new Command('create')
   .argument('<name>', 'Plugin name (kebab-case)')
   .option('-d, --description <desc>', 'Plugin description', 'A Mayday Create plugin')
   .action(async (name: string, opts: { description: string }) => {
-    const id = name.toLowerCase().replace(/[^a-z0-9-]/g, '-');
+    if (!name || !name.trim()) {
+      console.error('Plugin name cannot be empty.');
+      process.exit(1);
+    }
+    const id = name.toLowerCase().replace(/[^a-z0-9-]/g, '-').replace(/^-+|-+$/g, '');
+    if (!id) {
+      console.error('Plugin name must contain at least one alphanumeric character.');
+      process.exit(1);
+    }
     const displayName = name
       .split('-')
       .map(w => w.charAt(0).toUpperCase() + w.slice(1))

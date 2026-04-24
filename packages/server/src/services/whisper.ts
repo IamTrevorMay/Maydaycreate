@@ -41,8 +41,9 @@ export class WhisperService {
     }
 
     const tmpDir = os.tmpdir();
-    const inputPath = path.join(tmpDir, `mayday-voice-${Date.now()}.${mimeType.includes('webm') ? 'webm' : 'mp4'}`);
-    const wavPath = path.join(tmpDir, `mayday-voice-${Date.now()}.wav`);
+    const uid = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    const inputPath = path.join(tmpDir, `mayday-voice-${uid}.${mimeType.includes('webm') ? 'webm' : 'mp4'}`);
+    const wavPath = path.join(tmpDir, `mayday-voice-${uid}.wav`);
 
     try {
       // Write audio to temp file

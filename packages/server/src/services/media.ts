@@ -96,10 +96,32 @@ export class MediaService {
 
       return regions;
     } catch (err: unknown) {
-      // ffmpeg returns non-zero on some valid runs, check stderr
+      // ffmpeg returns non-zero on some valid runs, check stderr for silence data
       const error = err as { stderr?: string };
       if (error.stderr?.includes('silence_start')) {
-        return this.detectSilence(filePath, options);
+        const regions: SilentRegion[] = [];
+        const lines = error.stderr.split('\n');
+        let currentStart: number | null = null;
+
+        for (const line of lines) {
+          const startMatch = line.match(/silence_start:\s*([\d.]+)/);
+          const endMatch = line.match(/silence_end:\s*([\d.]+)/);
+
+          if (startMatch) {
+            currentStart = parseFloat(startMatch[1]);
+          }
+          if (endMatch && currentStart !== null) {
+            const end = parseFloat(endMatch[1]);
+            regions.push({
+              start: currentStart,
+              end,
+              duration: end - currentStart,
+            });
+            currentStart = null;
+          }
+        }
+
+        return regions;
       }
       throw err;
     }

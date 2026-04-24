@@ -73,7 +73,8 @@ export function extractFeatures(record: CutRecord & { quality: string; weight: n
 
   // Parse tags from DB JSON column
   let tags: string[] = [];
-  try { tags = record.intent_tags ? JSON.parse(record.intent_tags) : []; } catch { tags = []; }
+  try { tags = record.intent_tags ? (JSON.parse(record.intent_tags) ?? []) : []; } catch { tags = []; }
+  if (!Array.isArray(tags)) tags = [];
 
   return {
     id: record.id!,

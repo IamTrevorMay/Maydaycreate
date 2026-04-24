@@ -15,7 +15,7 @@ import {
   bridgeServerEvents,
   bridgePluginEvents,
 } from './ipc-handlers.js';
-import { createTray } from './tray.js';
+import { createTray, destroyTray } from './tray.js';
 import { SyncEngine, SyncWatcher } from '@mayday/sync-engine';
 import type { SyncSource } from '@mayday/sync-engine';
 import { YouTubeAnalyzer } from './youtube/youtube-analyzer.js';
@@ -245,11 +245,15 @@ app.whenReady().then(async () => {
   if (presetSync.isEnabled() && bridge?.eventBus) {
     bridge.eventBus.on('plugin:preset-vault:preset-saved', (event: { data?: { id?: string } }) => {
       presetSync.queuePush(event.data?.id);
-      presetSync.pushChanges().catch(() => {});
+      presetSync.pushChanges().catch((err) => {
+        console.error('[PresetSync] Push failed after preset-saved:', err);
+      });
     });
     bridge.eventBus.on('plugin:preset-vault:preset-deleted', (event: { data?: { presetId?: string } }) => {
       presetSync.queueDelete(event.data?.presetId);
-      presetSync.pushChanges().catch(() => {});
+      presetSync.pushChanges().catch((err) => {
+        console.error('[PresetSync] Push failed after preset-deleted:', err);
+      });
     });
   }
 
@@ -301,6 +305,7 @@ app.whenReady().then(async () => {
 app.on('before-quit', () => {
   // Stop the global key listener's native subprocess and HTTP server so
   // the process exits cleanly — prevents the macOS "quit unexpectedly" dialog.
+  destroyTray();
   stopEmbeddedServer();
 });
 

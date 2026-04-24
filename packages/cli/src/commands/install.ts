@@ -17,8 +17,10 @@ export const installCommand = new Command('install')
       process.exit(1);
     }
 
-    // Remove existing symlink or directory
-    if (fs.existsSync(targetDir) || fs.lstatSync(targetDir).isSymbolicLink()) {
+    // Remove existing symlink or directory (lstatSync detects broken symlinks too)
+    let targetExists = false;
+    try { targetExists = fs.lstatSync(targetDir).isSymbolicLink() || fs.existsSync(targetDir); } catch { /* ENOENT — doesn't exist */ }
+    if (targetExists) {
       console.log(`Removing existing: ${targetDir}`);
       fs.rmSync(targetDir, { recursive: true, force: true });
     }

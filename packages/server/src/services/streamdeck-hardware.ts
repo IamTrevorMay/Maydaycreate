@@ -47,6 +47,8 @@ export class StreamDeckHardwareService {
   private trainingRecordId: number | null = null;
   private onTrainingAction: ((action: TrainingAction) => void) | null = null;
   private hotkeyManager: ExcaliburHotkeyManager | null = null;
+  private renderInProgress = false;
+  private pendingMode: 'editing' | 'training' | null = null;
 
   constructor(configService: StreamDeckConfigService, bridge: BridgeHandler, workerManager: StreamDeckWorkerManager) {
     this.configService = configService;
@@ -151,18 +153,32 @@ export class StreamDeckHardwareService {
     this.onTrainingAction = handler;
   }
 
-  setMode(mode: 'editing' | 'training'): void {
+  async setMode(mode: 'editing' | 'training'): Promise<void> {
     this.mode = mode;
     if (!this.deviceOpen) return;
-    const config = this.configService.getConfig();
-    if (mode === 'training') {
-      this.renderTrainingButtons(config).catch(err => {
-        console.error('[StreamDeckHW] Training render error:', err);
-      });
-    } else {
-      this.renderButtons(config).catch(err => {
-        console.error('[StreamDeckHW] Editing render error:', err);
-      });
+
+    if (this.renderInProgress) {
+      this.pendingMode = mode;
+      return;
+    }
+
+    this.renderInProgress = true;
+    try {
+      const config = this.configService.getConfig();
+      if (mode === 'training') {
+        await this.renderTrainingButtons(config);
+      } else {
+        await this.renderButtons(config);
+      }
+    } catch (err) {
+      console.error(`[StreamDeckHW] ${mode} render error:`, err);
+    } finally {
+      this.renderInProgress = false;
+      if (this.pendingMode !== null) {
+        const next = this.pendingMode;
+        this.pendingMode = null;
+        await this.setMode(next);
+      }
     }
   }
 

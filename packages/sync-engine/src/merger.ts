@@ -2,6 +2,14 @@ import fs from 'fs';
 import path from 'path';
 import type { FileDiff, ConflictResolution } from './types.js';
 
+function safePath(base: string, relativePath: string): string {
+  const resolved = path.resolve(base, relativePath);
+  if (!resolved.startsWith(path.resolve(base) + path.sep) && resolved !== path.resolve(base)) {
+    throw new Error(`Path traversal detected: ${relativePath}`);
+  }
+  return resolved;
+}
+
 export interface MergeResult {
   pulled: string[];
   pushed: string[];
@@ -20,8 +28,8 @@ export async function applyChanges(
   const result: MergeResult = { pulled: [], pushed: [], skippedConflicts: [] };
 
   for (const diff of diffs) {
-    const localTarget = path.join(localConfigsDir, diff.relativePath);
-    const remoteTarget = path.join(remoteConfigsDir, diff.relativePath);
+    const localTarget = safePath(localConfigsDir, diff.relativePath);
+    const remoteTarget = safePath(remoteConfigsDir, diff.relativePath);
 
     switch (diff.state) {
       case 'needs-pull':
@@ -58,8 +66,8 @@ export function resolveConflict(
   localConfigsDir: string,
   remoteConfigsDir: string,
 ): void {
-  const localPath = path.join(localConfigsDir, resolution.relativePath);
-  const remotePath = path.join(remoteConfigsDir, resolution.relativePath);
+  const localPath = safePath(localConfigsDir, resolution.relativePath);
+  const remotePath = safePath(remoteConfigsDir, resolution.relativePath);
 
   if (resolution.choice === 'keep-mine') {
     fs.mkdirSync(path.dirname(remotePath), { recursive: true });

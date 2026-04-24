@@ -26,7 +26,7 @@ const DEFAULTS: LauncherConfig = {
   autoLaunchOnLogin: true,
   startMinimized: true,
   anthropicApiKey: '',
-  sourceRepoPath: '/Users/trevormay/Desktop/MaydayCreate',
+  sourceRepoPath: '',
   supabaseUrl: '',
   supabaseAnonKey: '',
   autoUpdate: true,

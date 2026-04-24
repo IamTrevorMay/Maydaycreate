@@ -3,9 +3,11 @@ import { Command } from 'commander';
 export const disableCommand = new Command('disable')
   .description('Disable a plugin')
   .argument('<id>', 'Plugin ID')
-  .action(async (id: string) => {
+  .option('-p, --port <port>', 'Server port', '9876')
+  .action(async (id: string, opts: { port: string }) => {
+    const port = opts.port;
     try {
-      const res = await fetch(`http://localhost:9876/api/plugins/${id}/disable`, { method: 'POST' });
+      const res = await fetch(`http://localhost:${port}/api/plugins/${id}/disable`, { method: 'POST' });
       const data = await res.json();
       if (data.success) {
         console.log(`Plugin "${id}" disabled`);

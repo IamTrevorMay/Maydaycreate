@@ -3,6 +3,9 @@ import type { PresetIndexEntry, ExcaliburPresetCommand } from '@mayday/types';
 const DEFAULT_PORT = 9876;
 
 function curlCommand(presetId: string, port = DEFAULT_PORT): string {
+  if (!/^[a-f0-9-]+$/i.test(presetId)) {
+    throw new Error(`Invalid presetId: ${presetId}`);
+  }
   return `curl -s -X POST http://localhost:${port}/api/plugins/preset-vault/command/apply -H "Content-Type: application/json" -d "{\\"presetId\\":\\"${presetId}\\"}"`;
 }
 

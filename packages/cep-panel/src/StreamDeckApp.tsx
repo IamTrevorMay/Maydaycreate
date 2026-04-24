@@ -60,7 +60,6 @@ export function StreamDeckApp() {
       payload: { mode: newMode },
       timestamp: Date.now(),
     });
-    setMode(newMode);
   }, [ws.send]);
 
   return (

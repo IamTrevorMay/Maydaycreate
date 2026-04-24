@@ -19,7 +19,13 @@ export const listCommand = new Command('list')
       const manifestPath = path.join(pluginsDir, entry.name, 'mayday.json');
       if (!fs.existsSync(manifestPath)) continue;
 
-      const manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf-8'));
+      let manifest;
+      try {
+        manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf-8'));
+      } catch {
+        console.log(`  ⚠ ${entry.name}: malformed mayday.json`);
+        continue;
+      }
       const status = '●';
       console.log(`  ${status} ${manifest.name} (${manifest.id}) v${manifest.version}`);
       if (manifest.description) {
