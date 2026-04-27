@@ -16,6 +16,7 @@
     "build:server": "npm run -w @mayday/server build",
     "build:cli": "npm run -w @mayday/cli build",
     "build:cep": "npm run -w @mayday/cep-panel build",
+    "build:cep-core": "node packages/cep-core/build.js",
     "build:ui-kit": "npm run -w @mayday/ui-kit build",
     "build:sync-engine": "npm run -w @mayday/sync-engine build",
     "build:launcher": "npm run -w @mayday/launcher build",

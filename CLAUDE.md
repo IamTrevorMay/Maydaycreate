@@ -172,7 +172,20 @@ Launcher can install/update/uninstall plugins from GitHub Releases.
 
 **CEP cache busting**: Extensions installed as `com.mayday.{id}.v{version}/` — version suffix busts Premiere's aggressive cache.
 
-### Phase 2: Extract Mayday Core CEP extension — 🔲 NOT STARTED
+### Phase 2: Extract Mayday Core CEP extension — ✅ COMPLETE (2026-04-27)
+Created `packages/cep-core/` as a separate CEP extension (`com.mayday.core`).
+
+**New files**:
+- `packages/cep-core/CSXS/manifest.xml` — Extension ID `com.mayday.core.bridge`
+- `packages/cep-core/client/bridge.html` — WebSocket connection + ExtendScript serial queue + CSEvent dispatch
+- `packages/cep-core/client/lib/CSInterface.js` — Adobe library copy
+- `packages/cep-core/build.js` — Copies client files + builds ExtendScript bundle to `dist/cep-core/`
+
+**Modified files**:
+- `scripts/install-cep.sh` — Installs both `com.mayday.core` and `com.mayday.create`
+- `package.json` — Added `build:cep-core` script
+
+**Core bridge provides**: WebSocket to server, ExtendScript serial queue, inter-extension CSEvent dispatch (`mayday:message`, `mayday:eval`, `mayday:send`, `mayday:connected`, `mayday:disconnected`). Plugin panels communicate through CSEvents rather than each maintaining their own WebSocket.
 ### Phase 3: Extract premiere-pro-sync plugin — 🔲 NOT STARTED
 ### Phase 4: Extract remaining plugins to repos — 🔲 NOT STARTED
 ### Phase 5: Launcher repo cleanup — 🔲 NOT STARTED

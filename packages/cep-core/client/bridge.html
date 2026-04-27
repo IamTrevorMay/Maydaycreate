@@ -1,0 +1,208 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <title>Mayday Core Bridge</title>
+  <script src="./lib/CSInterface.js"></script>
+  <style>
+    body {
+      margin: 0;
+      padding: 12px;
+      background: #1e1e1e;
+      color: #888;
+      font-family: -apple-system, BlinkMacSystemFont, sans-serif;
+      font-size: 11px;
+    }
+    .status { margin: 4px 0; }
+    .dot {
+      display: inline-block;
+      width: 6px;
+      height: 6px;
+      border-radius: 50%;
+      margin-right: 6px;
+      vertical-align: middle;
+    }
+    .connected { background: #4caf50; }
+    .disconnected { background: #f44336; }
+    .reconnecting { background: #ff9800; }
+  </style>
+</head>
+<body>
+  <div style="font-weight: 600; margin-bottom: 8px; color: #aaa;">Mayday Core Bridge</div>
+  <div class="status" id="ws-status">
+    <span class="dot disconnected" id="ws-dot"></span>
+    <span id="ws-text">Connecting...</span>
+  </div>
+  <div class="status" id="es-status">
+    <span class="dot disconnected" id="es-dot"></span>
+    <span id="es-text">ExtendScript: loading...</span>
+  </div>
+
+  <script>
+    // === Mayday Core Bridge ===
+    // Provides:
+    // 1. WebSocket connection to Mayday server (localhost:9876)
+    // 2. ExtendScript bridge via CSInterface.evalScript
+    // 3. Inter-extension messaging via CSEvent dispatch
+
+    var SERVER_PORT = 9876;
+    var RECONNECT_INTERVAL = 3000;
+    var cs = new CSInterface();
+    var ws = null;
+    var reconnectTimer = null;
+    var evalQueue = [];
+    var evalBusy = false;
+
+    // === Status UI ===
+    function setWsStatus(state, text) {
+      var dot = document.getElementById('ws-dot');
+      var span = document.getElementById('ws-text');
+      dot.className = 'dot ' + state;
+      span.textContent = text;
+    }
+
+    function setEsStatus(state, text) {
+      var dot = document.getElementById('es-dot');
+      var span = document.getElementById('es-text');
+      dot.className = 'dot ' + state;
+      span.textContent = text;
+    }
+
+    // === WebSocket Connection ===
+    function connect() {
+      if (ws && (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING)) return;
+
+      setWsStatus('reconnecting', 'Connecting to server...');
+
+      ws = new WebSocket('ws://localhost:' + SERVER_PORT);
+
+      ws.onopen = function() {
+        setWsStatus('connected', 'Server connected (port ' + SERVER_PORT + ')');
+        // Broadcast connection event to other extensions
+        dispatchCoreEvent('mayday:connected', { port: SERVER_PORT });
+      };
+
+      ws.onmessage = function(event) {
+        try {
+          var msg = JSON.parse(event.data);
+          // Forward all server messages as CSEvents so plugin panels can receive them
+          dispatchCoreEvent('mayday:message', msg);
+
+          // Handle ExtendScript call requests from server
+          if (msg.type === 'extendscript:call') {
+            handleEvalScript(msg.payload);
+          }
+        } catch (e) {
+          // Ignore non-JSON messages
+        }
+      };
+
+      ws.onclose = function() {
+        setWsStatus('disconnected', 'Server disconnected');
+        dispatchCoreEvent('mayday:disconnected', {});
+        scheduleReconnect();
+      };
+
+      ws.onerror = function() {
+        // onclose will fire after this
+      };
+    }
+
+    function scheduleReconnect() {
+      if (reconnectTimer) return;
+      reconnectTimer = setTimeout(function() {
+        reconnectTimer = null;
+        connect();
+      }, RECONNECT_INTERVAL);
+    }
+
+    // === ExtendScript Bridge ===
+    // Serial queue prevents cross-wired evalScript responses
+    function evalScript(fnCall, callback) {
+      evalQueue.push({ fnCall: fnCall, callback: callback });
+      processEvalQueue();
+    }
+
+    function processEvalQueue() {
+      if (evalBusy || evalQueue.length === 0) return;
+      evalBusy = true;
+      var item = evalQueue.shift();
+      cs.evalScript(item.fnCall, function(result) {
+        evalBusy = false;
+        if (item.callback) item.callback(result);
+        processEvalQueue();
+      });
+    }
+
+    function handleEvalScript(payload) {
+      if (!payload || !payload.fn) return;
+
+      // Build the ExtendScript function call string
+      var argsJson = payload.args ? JSON.stringify(payload.args) : '""';
+      var escaped = argsJson.replace(/\\/g, '\\\\').replace(/'/g, "\\'");
+      var call = "maydayCall('" + payload.fn + "', '" + escaped + "')";
+
+      evalScript(call, function(result) {
+        // Send result back to server
+        if (ws && ws.readyState === WebSocket.OPEN) {
+          ws.send(JSON.stringify({
+            type: 'extendscript:result',
+            source: 'core-bridge',
+            payload: {
+              callId: payload.callId,
+              result: result,
+            },
+            timestamp: Date.now(),
+          }));
+        }
+        // Also broadcast to plugin panels
+        dispatchCoreEvent('mayday:es-result', {
+          callId: payload.callId,
+          result: result,
+        });
+      });
+    }
+
+    // === Inter-Extension Events ===
+    // Dispatches CSEvents that plugin CEP panels can listen for
+    function dispatchCoreEvent(eventType, data) {
+      var event = new CSEvent(eventType, 'APPLICATION', 'com.mayday.core.bridge', '*');
+      event.data = JSON.stringify(data);
+      cs.dispatchEvent(event);
+    }
+
+    // Listen for requests from plugin panels
+    cs.addEventListener('mayday:eval', function(event) {
+      try {
+        var payload = JSON.parse(event.data);
+        handleEvalScript(payload);
+      } catch (e) {
+        // Ignore malformed events
+      }
+    });
+
+    // Listen for plugin panels sending messages to server
+    cs.addEventListener('mayday:send', function(event) {
+      if (ws && ws.readyState === WebSocket.OPEN) {
+        ws.send(event.data);
+      }
+    });
+
+    // === Test ExtendScript ===
+    function testExtendScript() {
+      evalScript("typeof maydayCall === 'function' ? 'ready' : 'not loaded'", function(result) {
+        if (result === 'ready') {
+          setEsStatus('connected', 'ExtendScript: ready');
+        } else {
+          setEsStatus('disconnected', 'ExtendScript: ' + result);
+        }
+      });
+    }
+
+    // === Init ===
+    connect();
+    // Test ExtendScript after a short delay to let it load
+    setTimeout(testExtendScript, 1000);
+  </script>
+</body>
+</html>
