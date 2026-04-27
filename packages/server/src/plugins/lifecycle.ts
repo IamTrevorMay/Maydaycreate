@@ -107,7 +107,7 @@ export class PluginLifecycle {
             platform: 'node',
             outfile: outFile,
             // Keep native/Node modules external — they resolve from the main process
-            external: ['better-sqlite3', 'brain.js', 'gpu.js', 'fs', 'path', 'os', 'crypto', 'util', 'events', 'stream', 'url', 'http', 'https', 'net', 'child_process', 'worker_threads'],
+            external: ['better-sqlite3', 'brain.js', 'gpu.js', 'chokidar', 'fsevents', 'fs', 'path', 'os', 'crypto', 'util', 'events', 'stream', 'url', 'http', 'https', 'net', 'child_process', 'worker_threads'],
             // Allow plugins to resolve @mayday/* packages from the server's module tree
             nodePaths: nodeModulesDirs,
           });
