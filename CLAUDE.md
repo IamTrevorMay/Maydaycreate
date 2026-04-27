@@ -186,7 +186,19 @@ Created `packages/cep-core/` as a separate CEP extension (`com.mayday.core`).
 - `package.json` — Added `build:cep-core` script
 
 **Core bridge provides**: WebSocket to server, ExtendScript serial queue, inter-extension CSEvent dispatch (`mayday:message`, `mayday:eval`, `mayday:send`, `mayday:connected`, `mayday:disconnected`). Plugin panels communicate through CSEvents rather than each maintaining their own WebSocket.
-### Phase 3: Extract premiere-pro-sync plugin — 🔲 NOT STARTED
+### Phase 3: Extract premiere-pro-sync plugin — ✅ COMPLETE (2026-04-27)
+Created `plugins/premiere-pro-sync/` with full sync engine lifecycle.
+
+**New files**:
+- `plugins/premiere-pro-sync/mayday.json` — 11 commands, filesystem permission, config for syncSourcePath + autoSync
+- `plugins/premiere-pro-sync/src/index.ts` — Full plugin: activate creates SyncEngine + discovers sources, deactivate stops watcher, commands wrap all engine methods
+
+**Modified files**:
+- `packages/launcher/src/main/index.ts` — Sets MAYDAY_MACHINE_ID, MAYDAY_MACHINE_NAME, MAYDAY_SYNC_SOURCE_PATH env vars for plugins
+- `packages/launcher/src/main/ipc-handlers.ts` — Sync/history IPC handlers now proxy through `lifecycle.executeCommand('premiere-pro-sync', ...)` with fallback to legacy `_syncEngine`
+- `packages/launcher/src/main/ipc-handlers.ts` — `bridgeSyncEvents()` listens for plugin events too
+
+**Migration pattern**: IPC handlers try plugin first, fall back to legacy engine. Both paths coexist during transition. Legacy sync code can be removed once plugin is validated.
 ### Phase 4: Extract remaining plugins to repos — 🔲 NOT STARTED
 ### Phase 5: Launcher repo cleanup — 🔲 NOT STARTED
 ### Phase 6: Cutting Board IPC migration — 🔲 NOT STARTED

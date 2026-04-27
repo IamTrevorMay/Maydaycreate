@@ -175,7 +175,14 @@ app.whenReady().then(async () => {
     process.env.ANTHROPIC_API_KEY = config.anthropicApiKey;
   }
 
-  // Sync engine
+  // Set machine identity + sync config for plugins (premiere-pro-sync, etc.)
+  process.env.MAYDAY_MACHINE_ID = config.machineId;
+  process.env.MAYDAY_MACHINE_NAME = config.machineName;
+  if (config.syncSourcePath) {
+    process.env.MAYDAY_SYNC_SOURCE_PATH = config.syncSourcePath;
+  }
+
+  // Sync engine (legacy — will be removed once premiere-pro-sync plugin is fully validated)
   const syncEngine = new SyncEngine({
     syncSourcePath: config.syncSourcePath,
     machineId: config.machineId,
@@ -220,6 +227,7 @@ app.whenReady().then(async () => {
 
   // Push plugin list to renderer now that server + plugins are ready
   bridgePluginEvents();
+
 
   // YouTube → Supabase sync
   const ytSync = new YouTubeSyncService();

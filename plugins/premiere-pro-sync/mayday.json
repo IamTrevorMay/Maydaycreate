@@ -1,0 +1,50 @@
+{
+  "id": "premiere-pro-sync",
+  "name": "Premiere Pro Sync",
+  "version": "1.0.0",
+  "description": "Sync Premiere Pro keyboard shortcuts, workspaces, presets, and configs across machines",
+  "author": "Trevor May",
+  "main": "src/index.ts",
+  "repository": "IamTrevorMay/mayday-premiere-sync",
+  "minSdkVersion": "2.0.0",
+  "hasCep": false,
+  "commands": [
+    { "id": "discover-sources", "name": "Discover Sync Sources", "description": "Scan for Premiere Pro config directories", "hidden": true },
+    { "id": "run-sync", "name": "Run Sync", "description": "Synchronize all configured sources" },
+    { "id": "get-status", "name": "Get Status", "description": "Get current sync status", "hidden": true },
+    { "id": "get-conflicts", "name": "Get Conflicts", "description": "List unresolved conflicts", "hidden": true },
+    { "id": "resolve-conflict", "name": "Resolve Conflict", "description": "Resolve a sync conflict", "hidden": true },
+    { "id": "get-sync-log", "name": "Get Sync Log", "description": "Get recent sync history", "hidden": true },
+    { "id": "get-queue", "name": "Get Queue", "description": "Get offline queue entries", "hidden": true },
+    { "id": "flush-queue", "name": "Flush Queue", "description": "Process offline queue", "hidden": true },
+    { "id": "create-snapshot", "name": "Create Snapshot", "description": "Create a backup snapshot" },
+    { "id": "list-snapshots", "name": "List Snapshots", "description": "List available snapshots", "hidden": true },
+    { "id": "restore-snapshot", "name": "Restore Snapshot", "description": "Restore from a backup snapshot" }
+  ],
+  "config": {
+    "syncSourcePath": {
+      "type": "string",
+      "label": "Sync Source Path",
+      "default": "",
+      "description": "Shared folder (NAS/Dropbox/Google Drive) for syncing configs"
+    },
+    "autoSync": {
+      "type": "boolean",
+      "label": "Auto-sync on File Change",
+      "default": true,
+      "description": "Watch for file changes and sync automatically"
+    }
+  },
+  "permissions": ["filesystem"],
+  "ui": {
+    "page": true,
+    "sidebarLabel": "Sync",
+    "sidebarIcon": "sync",
+    "sidebarOrder": 20
+  },
+  "marketplace": {
+    "category": "utility",
+    "tags": ["sync", "premiere", "config", "keyboard-shortcuts", "workspaces"],
+    "repository": "IamTrevorMay/mayday-premiere-sync"
+  }
+}

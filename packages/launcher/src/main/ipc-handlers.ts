@@ -178,51 +178,112 @@ export function registerIpcHandlers(): void {
     return bridge.getStatus();
   });
 
-  // ── Sync ───────────────────────────────────────────────────────────────────
+  // ── Sync (proxied to premiere-pro-sync plugin) ─────────────────────────────
 
-  ipcMain.handle('sync:getStatus', () => {
-    return _syncEngine?.getStatus() ?? { state: 'idle', pendingCount: 0, conflictCount: 0 };
+  ipcMain.handle('sync:getStatus', async () => {
+    const bridge = getServerBridge();
+    if (!bridge) return { state: 'idle', pendingCount: 0, conflictCount: 0 };
+    try {
+      return await bridge.lifecycle.executeCommand('premiere-pro-sync', 'get-status');
+    } catch {
+      // Plugin may not be loaded yet — fall back to legacy engine
+      return _syncEngine?.getStatus() ?? { state: 'idle', pendingCount: 0, conflictCount: 0 };
+    }
   });
 
   ipcMain.handle('sync:runSync', async () => {
+    const bridge = getServerBridge();
+    if (bridge) {
+      try {
+        return await bridge.lifecycle.executeCommand('premiere-pro-sync', 'run-sync');
+      } catch { /* fall through to legacy */ }
+    }
     if (!_syncEngine) throw new Error('Sync engine not initialized');
     await _syncEngine.runSync();
   });
 
-  ipcMain.handle('sync:getConflicts', () => {
+  ipcMain.handle('sync:getConflicts', async () => {
+    const bridge = getServerBridge();
+    if (bridge) {
+      try {
+        return await bridge.lifecycle.executeCommand('premiere-pro-sync', 'get-conflicts');
+      } catch { /* fall through */ }
+    }
     return _syncEngine?.getConflicts() ?? [];
   });
 
   ipcMain.handle('sync:resolveConflict', async (_e, resolution: ConflictResolution) => {
+    const bridge = getServerBridge();
+    if (bridge) {
+      try {
+        return await bridge.lifecycle.executeCommand('premiere-pro-sync', 'resolve-conflict', resolution);
+      } catch { /* fall through */ }
+    }
     if (!_syncEngine) throw new Error('Sync engine not initialized');
     await _syncEngine.resolveConflict(resolution);
   });
 
-  ipcMain.handle('sync:getSyncLog', () => {
+  ipcMain.handle('sync:getSyncLog', async () => {
+    const bridge = getServerBridge();
+    if (bridge) {
+      try {
+        return await bridge.lifecycle.executeCommand('premiere-pro-sync', 'get-sync-log');
+      } catch { /* fall through */ }
+    }
     return _syncEngine?.getSyncLog() ?? [];
   });
 
-  ipcMain.handle('sync:getQueue', () => {
+  ipcMain.handle('sync:getQueue', async () => {
+    const bridge = getServerBridge();
+    if (bridge) {
+      try {
+        return await bridge.lifecycle.executeCommand('premiere-pro-sync', 'get-queue');
+      } catch { /* fall through */ }
+    }
     return _syncEngine?.getQueue() ?? [];
   });
 
   ipcMain.handle('sync:flushQueue', async () => {
+    const bridge = getServerBridge();
+    if (bridge) {
+      try {
+        return await bridge.lifecycle.executeCommand('premiere-pro-sync', 'flush-queue');
+      } catch { /* fall through */ }
+    }
     if (!_syncEngine) throw new Error('Sync engine not initialized');
     await _syncEngine.flushQueue();
   });
 
-  // ── History ────────────────────────────────────────────────────────────────
+  // ── History (proxied to premiere-pro-sync plugin) ──────────────────────────
 
-  ipcMain.handle('history:list', () => {
+  ipcMain.handle('history:list', async () => {
+    const bridge = getServerBridge();
+    if (bridge) {
+      try {
+        return await bridge.lifecycle.executeCommand('premiere-pro-sync', 'list-snapshots');
+      } catch { /* fall through */ }
+    }
     return _syncEngine?.listSnapshots() ?? [];
   });
 
-  ipcMain.handle('history:createSnapshot', () => {
+  ipcMain.handle('history:createSnapshot', async () => {
+    const bridge = getServerBridge();
+    if (bridge) {
+      try {
+        return await bridge.lifecycle.executeCommand('premiere-pro-sync', 'create-snapshot');
+      } catch { /* fall through */ }
+    }
     if (!_syncEngine) throw new Error('Sync engine not initialized');
     return _syncEngine.createSnapshot();
   });
 
-  ipcMain.handle('history:restore', (_e, snapshot: import('@mayday/sync-engine').HistorySnapshot) => {
+  ipcMain.handle('history:restore', async (_e, snapshot: import('@mayday/sync-engine').HistorySnapshot) => {
+    const bridge = getServerBridge();
+    if (bridge) {
+      try {
+        return await bridge.lifecycle.executeCommand('premiere-pro-sync', 'restore-snapshot', snapshot);
+      } catch { /* fall through */ }
+    }
     if (!_syncEngine) throw new Error('Sync engine not initialized');
     _syncEngine.restoreSnapshot(snapshot);
   });
@@ -335,10 +396,20 @@ export function registerCutFinderIpc(): void {
 
 /** Push sync status changes to renderer via IPC events */
 export function bridgeSyncEvents(): void {
-  if (!_syncEngine) return;
-  _syncEngine.onStatusChanged((status) => {
-    if (_win && !_win.isDestroyed()) _win.webContents.send('sync:statusChanged', status);
-  });
+  // Legacy sync engine events
+  if (_syncEngine) {
+    _syncEngine.onStatusChanged((status) => {
+      if (_win && !_win.isDestroyed()) _win.webContents.send('sync:statusChanged', status);
+    });
+  }
+
+  // Plugin-based sync events (premiere-pro-sync emits plugin:premiere-pro-sync:sync-status)
+  const bridge = getServerBridge();
+  if (bridge?.eventBus) {
+    bridge.eventBus.on('plugin:premiere-pro-sync:sync-status', (event: { data: unknown }) => {
+      if (_win && !_win.isDestroyed()) _win.webContents.send('sync:statusChanged', event.data);
+    });
+  }
 }
 
 /** Push server status changes to renderer */
