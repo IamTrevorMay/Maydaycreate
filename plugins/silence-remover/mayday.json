@@ -3,7 +3,11 @@
   "name": "Silence Remover",
   "version": "0.1.0",
   "description": "Detect and remove silent regions from audio using AI-powered analysis",
+  "author": "Trevor May",
   "main": "src/index.ts",
+  "repository": "IamTrevorMay/mayday-silence-remover",
+  "minSdkVersion": "2.0.0",
+  "hasCep": false,
   "marketplace": {
     "category": "editing",
     "tags": ["audio", "silence", "cleanup"]

@@ -3,7 +3,11 @@
   "name": "Preset Vault",
   "version": "0.1.0",
   "description": "Capture, save, and re-apply Premiere Pro effect stacks across clips and projects",
+  "author": "Trevor May",
   "main": "src/index.ts",
+  "repository": "IamTrevorMay/mayday-preset-vault",
+  "minSdkVersion": "2.0.0",
+  "hasCep": true,
   "marketplace": {
     "category": "effects",
     "tags": ["presets", "effects", "excalibur", "macros"]

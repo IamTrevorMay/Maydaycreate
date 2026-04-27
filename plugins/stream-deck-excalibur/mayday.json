@@ -3,7 +3,11 @@
   "name": "Mayday Shortcuts",
   "version": "0.1.0",
   "description": "Mayday Shortcuts hardware integration with Excalibur preset execution and button assignment",
+  "author": "Trevor May",
   "main": "src/index.ts",
+  "repository": "IamTrevorMay/mayday-shortcuts",
+  "minSdkVersion": "2.0.0",
+  "hasCep": true,
   "permissions": ["effects", "timeline"],
   "marketplace": {
     "category": "hardware",

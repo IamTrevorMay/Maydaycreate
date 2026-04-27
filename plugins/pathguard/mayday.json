@@ -3,7 +3,11 @@
   "name": "PathGuard",
   "version": "0.1.0",
   "description": "Dynamic file path management via symlink indirection. Prevents broken media links when files are moved or renamed.",
+  "author": "Trevor May",
   "main": "src/index.ts",
+  "repository": "IamTrevorMay/mayday-pathguard",
+  "minSdkVersion": "2.0.0",
+  "hasCep": true,
   "targetApp": "premiere",
   "ui": {
     "page": true,

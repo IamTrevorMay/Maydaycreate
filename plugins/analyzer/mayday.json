@@ -3,7 +3,11 @@
   "name": "Analyzer",
   "version": "0.1.0",
   "description": "YouTube video effect analysis — detect edits, transitions, and effects from reference videos",
+  "author": "Trevor May",
   "main": "src/index.ts",
+  "repository": "IamTrevorMay/mayday-analyzer",
+  "minSdkVersion": "2.0.0",
+  "hasCep": false,
   "permissions": ["ai", "media"],
   "ui": {
     "page": true,

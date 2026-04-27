@@ -32,6 +32,9 @@ const ManifestSchema = z.object({
   description: z.string(),
   author: z.string().optional(),
   main: z.string().default('src/index.ts'),
+  repository: z.string().optional(),
+  minSdkVersion: z.string().optional(),
+  hasCep: z.boolean().optional(),
   commands: z.array(z.object({
     id: z.string(),
     name: z.string(),

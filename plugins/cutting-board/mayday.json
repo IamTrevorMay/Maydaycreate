@@ -3,7 +3,11 @@
   "name": "Cutting Board",
   "version": "0.1.0",
   "description": "Detect edits in the timeline, rate them, and store structured data for model training",
+  "author": "Trevor May",
   "main": "src/index.ts",
+  "repository": "IamTrevorMay/mayday-cutting-board",
+  "minSdkVersion": "2.0.0",
+  "hasCep": true,
   "ui": {
     "page": true,
     "sidebarLabel": "Cutting Board",
