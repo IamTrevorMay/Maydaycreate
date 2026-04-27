@@ -1,0 +1,17 @@
+{
+  "name": "mayday-PLUGIN_ID",
+  "version": "1.0.0",
+  "private": true,
+  "description": "PLUGIN_DESCRIPTION",
+  "scripts": {
+    "build": "node build.js",
+    "package": "node build.js && node package.js"
+  },
+  "devDependencies": {
+    "esbuild": "^0.20.0"
+  },
+  "dependencies": {
+    "@mayday/sdk": "file:../packages/sdk",
+    "@mayday/types": "file:../packages/types"
+  }
+}

@@ -199,9 +199,21 @@ Created `plugins/premiere-pro-sync/` with full sync engine lifecycle.
 - `packages/launcher/src/main/ipc-handlers.ts` — `bridgeSyncEvents()` listens for plugin events too
 
 **Migration pattern**: IPC handlers try plugin first, fall back to legacy engine. Both paths coexist during transition. Legacy sync code can be removed once plugin is validated.
-### Phase 4: Extract remaining plugins to repos — 🔲 NOT STARTED
-### Phase 5: Launcher repo cleanup — 🔲 NOT STARTED
-### Phase 6: Cutting Board IPC migration — 🔲 NOT STARTED
+### Phase 4: Prepare plugins for extraction — ✅ MANIFEST UPDATES COMPLETE (2026-04-27)
+All 7 plugin manifests updated with `repository`, `minSdkVersion`, `hasCep` fields. Plugin build tooling template created in `templates/plugin-repo/` (build.js, package.js, release.yml GitHub Action, README template).
+
+**Extraction order** (when creating independent repos):
+1. silence-remover — No CEP, no launcher IPC. Cleanest.
+2. analyzer — Some launcher IPC.
+3. preset-vault — Has CEP panel components.
+4. stream-deck-excalibur (shortcuts) — Has CEP panel, hardware services.
+5. pathguard — WIP, already isolated.
+6. cutting-board — Most complex, heavy launcher IPC.
+
+**To extract a plugin**: Create GitHub repo, copy plugin source + build template, `npm run package`, create release, update `plugin-compatibility.json`.
+
+### Phase 5: Launcher repo cleanup — 🔲 NOT STARTED (after plugin repos validated)
+### Phase 6: Cutting Board IPC migration — 🔲 NOT STARTED (last step)
 
 ## Build Steps (must do after code changes)
 - Server changes: `npm run build:server` then restart launcher
