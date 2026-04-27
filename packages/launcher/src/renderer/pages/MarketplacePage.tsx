@@ -1,7 +1,7 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import { usePlugins } from '../hooks/usePlugins.js';
 import { useIpc } from '../hooks/useIpc.js';
-import type { LauncherPluginInfo, PluginCategory } from '@mayday/types';
+import type { LauncherPluginInfo, PluginCategory, AvailablePluginInfo, PluginInstallProgress } from '@mayday/types';
 import { c } from '../styles.js';
 
 const CATEGORIES: Array<{ id: PluginCategory | 'all'; label: string }> = [
@@ -15,18 +15,51 @@ const CATEGORIES: Array<{ id: PluginCategory | 'all'; label: string }> = [
 ];
 
 export function MarketplacePage(): React.ReactElement {
-  const { plugins, loading, enable, disable, install } = usePlugins();
+  const { plugins, loading, enable, disable, install, refresh } = usePlugins();
   const ipc = useIpc();
   const [search, setSearch] = useState('');
   const [category, setCategory] = useState<PluginCategory | 'all'>('all');
+  const [available, setAvailable] = useState<AvailablePluginInfo[]>([]);
+  const [updates, setUpdates] = useState<Record<string, string>>({});
+  const [installing, setInstalling] = useState<string | null>(null);
+  const [progress, setProgress] = useState<PluginInstallProgress | null>(null);
+
+  // Fetch available plugins from compatibility manifest
+  useEffect(() => {
+    ipc.plugins.getAvailable().then(setAvailable).catch(console.error);
+  }, [ipc]);
+
+  // Check for updates on mount
+  useEffect(() => {
+    ipc.plugins.checkUpdates().then((result) => {
+      const map: Record<string, string> = {};
+      for (const u of result) map[u.pluginId] = u.latestVersion;
+      setUpdates(map);
+    }).catch(console.error);
+  }, [ipc]);
+
+  // Listen for install progress
+  useEffect(() => {
+    const unsub = ipc.plugins.onInstallProgress((p) => {
+      setProgress(p);
+      if (p.phase === 'done' || p.phase === 'error') {
+        setTimeout(() => {
+          setInstalling(null);
+          setProgress(null);
+          refresh();
+          // Re-fetch available to update installed status
+          ipc.plugins.getAvailable().then(setAvailable).catch(console.error);
+        }, 1500);
+      }
+    });
+    return unsub;
+  }, [ipc, refresh]);
 
   const filtered = useMemo(() => {
     let result = plugins;
-
     if (category !== 'all') {
       result = result.filter((p) => p.manifest.marketplace?.category === category);
     }
-
     if (search.trim()) {
       const q = search.toLowerCase();
       result = result.filter(
@@ -36,9 +69,21 @@ export function MarketplacePage(): React.ReactElement {
           p.manifest.marketplace?.tags?.some((t) => t.toLowerCase().includes(q)),
       );
     }
-
     return result;
   }, [plugins, search, category]);
+
+  // Available plugins not yet installed
+  const availableNotInstalled = useMemo(() => {
+    const installedIds = new Set(plugins.map(p => p.manifest.id));
+    let result = available.filter(a => !installedIds.has(a.id));
+    if (search.trim()) {
+      const q = search.toLowerCase();
+      result = result.filter(
+        a => a.id.includes(q) || a.description.toLowerCase().includes(q),
+      );
+    }
+    return result;
+  }, [available, plugins, search]);
 
   const installedCount = plugins.length;
   const activeCount = plugins.filter((p) => p.status === 'activated').length;
@@ -54,12 +99,44 @@ export function MarketplacePage(): React.ReactElement {
     }
   };
 
+  const handleInstallFromRepo = useCallback(async (pluginId: string) => {
+    setInstalling(pluginId);
+    setProgress({ phase: 'downloading', message: 'Starting...', pluginId });
+    try {
+      await ipc.plugins.installFromRepo(pluginId);
+    } catch (err) {
+      setProgress({ phase: 'error', message: String(err), pluginId });
+      setTimeout(() => { setInstalling(null); setProgress(null); }, 3000);
+    }
+  }, [ipc]);
+
+  const handleUpdate = useCallback(async (pluginId: string) => {
+    setInstalling(pluginId);
+    setProgress({ phase: 'downloading', message: 'Checking for update...', pluginId });
+    try {
+      await ipc.plugins.update(pluginId);
+    } catch (err) {
+      setProgress({ phase: 'error', message: String(err), pluginId });
+      setTimeout(() => { setInstalling(null); setProgress(null); }, 3000);
+    }
+  }, [ipc]);
+
+  const handleUninstall = useCallback(async (pluginId: string) => {
+    try {
+      await ipc.plugins.uninstall(pluginId);
+      await refresh();
+      ipc.plugins.getAvailable().then(setAvailable).catch(console.error);
+    } catch (err) {
+      console.error('Uninstall failed:', err);
+    }
+  }, [ipc, refresh]);
+
   return (
     <div style={{ padding: '20px 24px', height: '100%', overflow: 'auto', display: 'flex', flexDirection: 'column' }}>
       {/* Header */}
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 16 }}>
         <div>
-          <h2 style={{ color: c.text.primary, fontSize: 16, fontWeight: 600 }}>Marketplace</h2>
+          <h2 style={{ color: c.text.primary, fontSize: 16, fontWeight: 600 }}>Plugin Manager</h2>
           <p style={{ color: c.text.secondary, fontSize: 12, marginTop: 4 }}>
             {loading ? 'Loading...' : `${activeCount} active, ${installedCount} installed`}
           </p>
@@ -68,6 +145,21 @@ export function MarketplacePage(): React.ReactElement {
           Install from Disk
         </button>
       </div>
+
+      {/* Progress banner */}
+      {progress && (
+        <div style={{
+          background: progress.phase === 'error' ? '#3a1a1a' : '#1a2a1a',
+          border: `1px solid ${progress.phase === 'error' ? '#662222' : '#225522'}`,
+          borderRadius: 6,
+          padding: '10px 14px',
+          marginBottom: 12,
+          fontSize: 12,
+          color: progress.phase === 'error' ? '#ff6666' : '#88cc88',
+        }}>
+          {progress.message}
+        </div>
+      )}
 
       {/* Search + Category filter */}
       <div style={{ display: 'flex', gap: 12, marginBottom: 16, flexWrap: 'wrap' }}>
@@ -119,7 +211,7 @@ export function MarketplacePage(): React.ReactElement {
               message={
                 search || category !== 'all'
                   ? 'No plugins match your search.'
-                  : 'No plugins installed yet. Install one from disk to get started.'
+                  : 'No plugins installed yet. Install one from the available list below or from disk.'
               }
             />
           ) : (
@@ -132,19 +224,43 @@ export function MarketplacePage(): React.ReactElement {
               }}
             >
               {filtered.map((p) => (
-                <MarketplaceCard
+                <InstalledPluginCard
                   key={p.manifest.id}
                   plugin={p}
+                  updateAvailable={updates[p.manifest.id]}
+                  installing={installing === p.manifest.id}
                   onEnable={enable}
                   onDisable={disable}
+                  onUpdate={handleUpdate}
+                  onUninstall={handleUninstall}
                 />
               ))}
             </div>
           )}
 
-          {/* Available (future remote registry) */}
-          <SectionLabel label="Available" count={0} />
-          <EmptyState message="Remote plugin registry coming soon. For now, install plugins from disk." />
+          {/* Available (from compatibility manifest) */}
+          <SectionLabel label="Available" count={availableNotInstalled.length} />
+          {availableNotInstalled.length === 0 ? (
+            <EmptyState message="All available plugins are installed." />
+          ) : (
+            <div
+              style={{
+                display: 'grid',
+                gridTemplateColumns: 'repeat(auto-fill, minmax(260px, 1fr))',
+                gap: 12,
+                marginBottom: 24,
+              }}
+            >
+              {availableNotInstalled.map((a) => (
+                <AvailablePluginCard
+                  key={a.id}
+                  plugin={a}
+                  installing={installing === a.id}
+                  onInstall={handleInstallFromRepo}
+                />
+              ))}
+            </div>
+          )}
         </>
       )}
     </div>
@@ -199,14 +315,22 @@ const STATUS_COLORS: Record<string, string> = {
   discovered: c.text.secondary,
 };
 
-function MarketplaceCard({
+function InstalledPluginCard({
   plugin,
+  updateAvailable,
+  installing,
   onEnable,
   onDisable,
+  onUpdate,
+  onUninstall,
 }: {
   plugin: LauncherPluginInfo;
+  updateAvailable?: string;
+  installing: boolean;
   onEnable: (id: string) => void;
   onDisable: (id: string) => void;
+  onUpdate: (id: string) => void;
+  onUninstall: (id: string) => void;
 }): React.ReactElement {
   const { manifest, status } = plugin;
   const isActive = status === 'activated';
@@ -217,7 +341,7 @@ function MarketplaceCard({
     <div
       style={{
         background: c.bg.elevated,
-        border: `1px solid ${c.border.default}`,
+        border: `1px solid ${updateAvailable ? c.accent.primary + '66' : c.border.default}`,
         borderRadius: 6,
         padding: '14px 16px',
         display: 'flex',
@@ -243,6 +367,18 @@ function MarketplaceCard({
           {manifest.name}
         </span>
         <span style={{ fontSize: 10, color: c.text.secondary, flexShrink: 0 }}>v{manifest.version}</span>
+        {updateAvailable && (
+          <span style={{
+            fontSize: 9,
+            color: c.accent.primary,
+            background: c.accent.primary + '22',
+            borderRadius: 8,
+            padding: '1px 6px',
+            flexShrink: 0,
+          }}>
+            v{updateAvailable}
+          </span>
+        )}
       </div>
 
       {/* Description */}
@@ -299,21 +435,125 @@ function MarketplaceCard({
         <span style={{ fontSize: 10, color: c.text.disabled, textTransform: 'uppercase' }}>
           {status}
         </span>
-        <button
-          onClick={() => isActive ? onDisable(manifest.id) : onEnable(manifest.id)}
-          disabled={status === 'errored'}
+        <div style={{ display: 'flex', gap: 6 }}>
+          {updateAvailable && (
+            <button
+              onClick={() => onUpdate(manifest.id)}
+              disabled={installing}
+              style={{
+                ...actionBtn,
+                background: c.accent.primary,
+                color: '#fff',
+                opacity: installing ? 0.5 : 1,
+              }}
+            >
+              {installing ? 'Updating...' : 'Update'}
+            </button>
+          )}
+          <button
+            onClick={() => isActive ? onDisable(manifest.id) : onEnable(manifest.id)}
+            disabled={status === 'errored' || installing}
+            style={{
+              ...actionBtn,
+              background: isActive ? c.bg.hover : c.accent.primary,
+              color: isActive ? c.text.secondary : '#fff',
+              opacity: (status === 'errored' || installing) ? 0.5 : 1,
+            }}
+          >
+            {isActive ? 'Disable' : 'Enable'}
+          </button>
+          {manifest.repository && (
+            <button
+              onClick={() => onUninstall(manifest.id)}
+              disabled={installing}
+              title="Uninstall plugin"
+              style={{
+                ...actionBtn,
+                background: 'transparent',
+                color: c.text.disabled,
+                border: `1px solid ${c.border.default}`,
+                opacity: installing ? 0.5 : 1,
+              }}
+            >
+              Remove
+            </button>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function AvailablePluginCard({
+  plugin,
+  installing,
+  onInstall,
+}: {
+  plugin: AvailablePluginInfo;
+  installing: boolean;
+  onInstall: (id: string) => void;
+}): React.ReactElement {
+  return (
+    <div
+      style={{
+        background: c.bg.elevated,
+        border: `1px solid ${c.border.default}`,
+        borderRadius: 6,
+        padding: '14px 16px',
+        display: 'flex',
+        flexDirection: 'column',
+        gap: 8,
+        minWidth: 0,
+        opacity: installing ? 0.7 : 1,
+      }}
+    >
+      {/* Header */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+        <span style={{ width: 8, height: 8, borderRadius: '50%', background: c.text.disabled, flexShrink: 0 }} />
+        <span
           style={{
-            padding: '3px 10px',
-            borderRadius: 4,
-            border: 'none',
-            fontSize: 11,
-            cursor: status === 'errored' ? 'not-allowed' : 'pointer',
-            background: isActive ? c.bg.hover : c.accent.primary,
-            color: isActive ? c.text.secondary : '#fff',
-            opacity: status === 'errored' ? 0.5 : 1,
+            flex: 1,
+            fontWeight: 600,
+            fontSize: 13,
+            color: c.text.primary,
+            overflow: 'hidden',
+            textOverflow: 'ellipsis',
+            whiteSpace: 'nowrap',
           }}
         >
-          {isActive ? 'Disable' : 'Enable'}
+          {plugin.id.split('-').map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(' ')}
+        </span>
+        <span style={{ fontSize: 10, color: c.text.secondary, flexShrink: 0 }}>v{plugin.recommended}</span>
+      </div>
+
+      {/* Description */}
+      <p
+        style={{
+          color: c.text.secondary,
+          fontSize: 11,
+          lineHeight: 1.5,
+          margin: 0,
+        }}
+      >
+        {plugin.description}
+      </p>
+
+      {/* Footer */}
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginTop: 2 }}>
+        <span style={{ fontSize: 10, color: c.text.disabled }}>
+          {plugin.repository}
+        </span>
+        <button
+          onClick={() => onInstall(plugin.id)}
+          disabled={installing}
+          style={{
+            ...actionBtn,
+            background: c.accent.primary,
+            color: '#fff',
+            opacity: installing ? 0.5 : 1,
+          }}
+        >
+          {installing ? 'Installing...' : 'Install'}
         </button>
       </div>
     </div>
@@ -327,5 +567,13 @@ const secondaryBtn: React.CSSProperties = {
   background: 'transparent',
   color: '#999',
   fontSize: 12,
+  cursor: 'pointer',
+};
+
+const actionBtn: React.CSSProperties = {
+  padding: '3px 10px',
+  borderRadius: 4,
+  border: 'none',
+  fontSize: 11,
   cursor: 'pointer',
 };

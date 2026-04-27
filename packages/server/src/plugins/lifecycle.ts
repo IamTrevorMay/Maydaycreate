@@ -51,8 +51,13 @@ export class PluginLifecycle {
     try {
       let importPath = mainPath;
 
-      // Transpile .ts plugins to a .mjs file in the plugin root so node_modules resolves
-      if (mainPath.endsWith('.ts')) {
+      // Pre-built .mjs plugins can be loaded directly — skip transpilation
+      if (mainPath.endsWith('.mjs') || mainPath.endsWith('.js')) {
+        if (!fs.existsSync(mainPath)) {
+          throw new Error(`Plugin entry not found: ${mainPath}`);
+        }
+        importPath = mainPath;
+      } else if (mainPath.endsWith('.ts')) {
         // Place build output at plugin root (not inside src/) to avoid triggering tsx watch
         const pluginRoot = path.resolve(path.dirname(mainPath), '..');
         const outFile = path.join(pluginRoot, '.mayday-build', 'index.mjs');

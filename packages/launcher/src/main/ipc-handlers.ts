@@ -11,6 +11,13 @@ import type { YouTubeAnalyzer } from './youtube/youtube-analyzer.js';
 import { registerYouTubeHandlers } from './youtube/ipc-youtube.js';
 import { registerCuttingBoardHandlers } from './cutting-board-ipc.js';
 import { checkForUpdates, downloadAndInstallUpdate, quitAndInstall, pushVersion, relaunchApp } from './auto-updater.js';
+import {
+  getAvailablePlugins,
+  installPlugin,
+  updatePlugin,
+  uninstallPlugin,
+  checkForPluginUpdates,
+} from './plugin-manager.js';
 
 let _youtubeAnalyzer: YouTubeAnalyzer | null = null;
 
@@ -131,6 +138,36 @@ export function registerIpcHandlers(): void {
     }
 
     return manifest;
+  });
+
+  // ── Plugin Manager ───────────────────────────────────────────────────────
+
+  ipcMain.handle('plugins:getAvailable', () => {
+    return getAvailablePlugins();
+  });
+
+  ipcMain.handle('plugins:installFromRepo', async (_e, pluginId: string) => {
+    await installPlugin(pluginId, (progress) => {
+      if (_win && !_win.isDestroyed()) {
+        _win.webContents.send('plugins:installProgress', progress);
+      }
+    });
+  });
+
+  ipcMain.handle('plugins:update', async (_e, pluginId: string) => {
+    await updatePlugin(pluginId, (progress) => {
+      if (_win && !_win.isDestroyed()) {
+        _win.webContents.send('plugins:installProgress', progress);
+      }
+    });
+  });
+
+  ipcMain.handle('plugins:uninstall', async (_e, pluginId: string) => {
+    await uninstallPlugin(pluginId);
+  });
+
+  ipcMain.handle('plugins:checkUpdates', async () => {
+    return checkForPluginUpdates();
   });
 
   // ── Server ─────────────────────────────────────────────────────────────────

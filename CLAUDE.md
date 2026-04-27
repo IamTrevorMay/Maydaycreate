@@ -145,6 +145,39 @@ Full codebase security and reliability audit completed. **33 bugs fixed** in com
 ### Assessed & Skipped (not bugs)
 scanner.ts lazy hash (perf tradeoff), streamdeck-config.ts type assertion (validated), ai.ts textBlock (runtime-safe), websocket.ts reconnect (handled by onclose), StreamDeckGrid drag null (guarded), install-cep.sh sudo (set -e), timeline.jsx clip index (bounds-checked), sdk/ui.ts postMessage '*' (required for Electron), keystroke-simulator.ts permissions (EACCES rejected), model.ts tag vector (full retrain design), registry.ts concurrent (synchronous sqlite3), doctor.ts macOS paths (v1 by design).
 
+## Modular Plugin Architecture Migration
+
+**Goal**: Refactor from monolithic monorepo to modular ecosystem where the launcher is a plugin manager and each plugin is independently versioned, released, and installed from GitHub Releases.
+
+### Phase 1: Plugin installer infrastructure — ✅ COMPLETE (2026-04-27)
+Launcher can install/update/uninstall plugins from GitHub Releases.
+
+**New files**:
+- `plugin-compatibility.json` — registry of available plugins with repo URLs, compatible versions
+- `packages/launcher/src/main/plugin-manager.ts` — download, extract, install, update, uninstall from GitHub Releases
+- `packages/types/src/launcher.ts` — new types: InstalledPluginRecord, AvailablePluginInfo, PluginInstallProgress, etc.
+
+**Modified files**:
+- `packages/types/src/plugin.ts` — added `repository`, `minSdkVersion`, `hasCep` to PluginManifest
+- `packages/server/src/plugins/loader.ts` — `addPluginDirectory()` to scan external plugin dirs, `scanDirectory()` refactored
+- `packages/server/src/plugins/lifecycle.ts` — pre-built `.mjs`/`.js` plugins skip esbuild transpilation
+- `packages/server/src/server.ts` — `externalPluginsDirs` in ServerConfig, passed to loader
+- `packages/launcher/src/main/server-bridge.ts` — passes `userData/plugins/` as external plugins dir
+- `packages/launcher/src/main/config-store.ts` — `installedPlugins` tracking with add/remove/update helpers, `getExternalPluginsDir()`, `getCepExtensionsDir()`
+- `packages/launcher/src/main/ipc-handlers.ts` — new IPC: `plugins:getAvailable`, `plugins:installFromRepo`, `plugins:update`, `plugins:uninstall`, `plugins:checkUpdates`
+- `packages/launcher/src/preload/index.ts` — exposed new IPC methods + `onInstallProgress` event
+- `packages/launcher/src/renderer/pages/MarketplacePage.tsx` — full Plugin Manager UI with Available/Installed sections, install/update/uninstall buttons, progress banner
+
+**Plugin install flow**: User clicks Install → GitHub API fetch latest release → download zip → extract to `userData/plugins/{id}/` → install CEP extension (version-suffixed) → loadPlugin + activatePlugin.
+
+**CEP cache busting**: Extensions installed as `com.mayday.{id}.v{version}/` — version suffix busts Premiere's aggressive cache.
+
+### Phase 2: Extract Mayday Core CEP extension — 🔲 NOT STARTED
+### Phase 3: Extract premiere-pro-sync plugin — 🔲 NOT STARTED
+### Phase 4: Extract remaining plugins to repos — 🔲 NOT STARTED
+### Phase 5: Launcher repo cleanup — 🔲 NOT STARTED
+### Phase 6: Cutting Board IPC migration — 🔲 NOT STARTED
+
 ## Build Steps (must do after code changes)
 - Server changes: `npm run build:server` then restart launcher
 - CEP panel changes: `npm run build:cep` then restart Premiere

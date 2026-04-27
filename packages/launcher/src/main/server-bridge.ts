@@ -81,6 +81,9 @@ export async function startEmbeddedServer(opts: {
     ? path.resolve(app.getAppPath(), '../../plugins')
     : path.join(opts.resourcesPath, 'plugins');
 
+  // External plugins installed via Plugin Manager (userData/plugins/)
+  const externalPluginsDir = path.join(app.getPath('userData'), 'plugins');
+
   const dataDir = path.join(app.getPath('userData'), 'plugin-data');
 
   serverStartTime = Date.now();
@@ -88,6 +91,7 @@ export async function startEmbeddedServer(opts: {
   serverInstance = await startServer({
     port: opts.port,
     pluginsDir,
+    externalPluginsDirs: [externalPluginsDir],
     dataDir,
     supabaseUrl: opts.supabaseUrl,
     supabaseAnonKey: opts.supabaseAnonKey,

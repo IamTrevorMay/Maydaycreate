@@ -1,0 +1,47 @@
+{
+  "sdkVersion": "2.0.0",
+  "plugins": {
+    "cutting-board": {
+      "repository": "IamTrevorMay/mayday-cutting-board",
+      "compatible": ">=1.0.0",
+      "recommended": "1.0.0",
+      "description": "AI-powered edit detection and autocut"
+    },
+    "premiere-pro-sync": {
+      "repository": "IamTrevorMay/mayday-premiere-sync",
+      "compatible": ">=1.0.0",
+      "recommended": "1.0.0",
+      "description": "Sync Premiere Pro keyboard shortcuts, workspaces, and presets"
+    },
+    "shortcuts": {
+      "repository": "IamTrevorMay/mayday-shortcuts",
+      "compatible": ">=1.0.0",
+      "recommended": "1.0.0",
+      "description": "Stream Deck + Excalibur hotkey execution"
+    },
+    "pathguard": {
+      "repository": "IamTrevorMay/mayday-pathguard",
+      "compatible": ">=1.0.0",
+      "recommended": "1.0.0",
+      "description": "Media path protection via symlinks"
+    },
+    "preset-vault": {
+      "repository": "IamTrevorMay/mayday-preset-vault",
+      "compatible": ">=1.0.0",
+      "recommended": "1.0.0",
+      "description": "Effect preset capture, storage, and apply"
+    },
+    "silence-remover": {
+      "repository": "IamTrevorMay/mayday-silence-remover",
+      "compatible": ">=1.0.0",
+      "recommended": "1.0.0",
+      "description": "Audio silence detection and removal"
+    },
+    "analyzer": {
+      "repository": "IamTrevorMay/mayday-analyzer",
+      "compatible": ">=1.0.0",
+      "recommended": "1.0.0",
+      "description": "YouTube video analysis and effect detection"
+    }
+  }
+}

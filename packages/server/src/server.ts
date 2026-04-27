@@ -26,6 +26,8 @@ import { StreamDeckWorkerManager } from './services/streamdeck-worker-manager.js
 export interface ServerConfig {
   port: number;
   pluginsDir: string;
+  /** Additional directories to scan for installed plugins (e.g. userData/plugins/) */
+  externalPluginsDirs?: string[];
   dataDir: string;
   supabaseUrl?: string;
   supabaseAnonKey?: string;
@@ -113,6 +115,13 @@ export async function startServer(config: ServerConfig) {
     config.dataDir
   );
   const loader = new PluginLoader(config.pluginsDir, lifecycle, eventBus);
+
+  // Register additional plugin directories (externally installed plugins)
+  if (config.externalPluginsDirs) {
+    for (const dir of config.externalPluginsDirs) {
+      loader.addPluginDirectory(dir);
+    }
+  }
 
   // Health check
   app.get('/health', (_req, res) => {

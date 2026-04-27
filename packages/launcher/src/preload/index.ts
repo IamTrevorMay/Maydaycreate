@@ -12,6 +12,8 @@ import type {
 import type {
   ServerStatus,
   LauncherPluginInfo,
+  AvailablePluginInfo,
+  PluginInstallProgress,
   YouTubeVideoInfo,
   VideoAnalysis,
   VideoAnalysisSummary,
@@ -48,6 +50,18 @@ const mayday = {
       const handler = (_: unknown, plugins: LauncherPluginInfo[]) => cb(plugins);
       ipcRenderer.on('plugins:changed', handler);
       return () => ipcRenderer.off('plugins:changed', handler);
+    },
+    // Plugin Manager
+    getAvailable: (): Promise<AvailablePluginInfo[]> => ipcRenderer.invoke('plugins:getAvailable'),
+    installFromRepo: (pluginId: string): Promise<void> => ipcRenderer.invoke('plugins:installFromRepo', pluginId),
+    update: (pluginId: string): Promise<void> => ipcRenderer.invoke('plugins:update', pluginId),
+    uninstall: (pluginId: string): Promise<void> => ipcRenderer.invoke('plugins:uninstall', pluginId),
+    checkUpdates: (): Promise<Array<{ pluginId: string; currentVersion: string; latestVersion: string; repository: string }>> =>
+      ipcRenderer.invoke('plugins:checkUpdates'),
+    onInstallProgress: (cb: (progress: PluginInstallProgress) => void) => {
+      const handler = (_: unknown, progress: PluginInstallProgress) => cb(progress);
+      ipcRenderer.on('plugins:installProgress', handler);
+      return () => ipcRenderer.off('plugins:installProgress', handler);
     },
   },
 

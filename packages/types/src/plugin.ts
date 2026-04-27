@@ -13,6 +13,15 @@ export interface PluginManifest {
   config?: PluginConfigSchema;
   permissions?: PluginPermission[];
 
+  /** GitHub repo in owner/name format for update checks */
+  repository?: string;
+
+  /** Minimum launcher SDK version required */
+  minSdkVersion?: string;
+
+  /** Whether this plugin ships a CEP extension */
+  hasCep?: boolean;
+
   /** UI declaration — tells the launcher how to render this plugin */
   ui?: PluginUI_Manifest;
 

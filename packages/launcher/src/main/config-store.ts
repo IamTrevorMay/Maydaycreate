@@ -2,6 +2,7 @@ import { app } from 'electron';
 import fs from 'fs';
 import path from 'path';
 import { v4 as uuid } from 'uuid';
+import type { InstalledPluginRecord } from '@mayday/types';
 
 export interface LauncherConfig {
   syncSourcePath: string;
@@ -16,6 +17,7 @@ export interface LauncherConfig {
   supabaseAnonKey: string;
   autoUpdate: boolean;
   ghToken: string;
+  installedPlugins: InstalledPluginRecord[];
 }
 
 const DEFAULTS: LauncherConfig = {
@@ -31,6 +33,7 @@ const DEFAULTS: LauncherConfig = {
   supabaseAnonKey: '',
   autoUpdate: true,
   ghToken: '',
+  installedPlugins: [],
 };
 
 function getConfigPath(): string {
@@ -81,4 +84,45 @@ export function updateConfig(partial: Partial<LauncherConfig>): LauncherConfig {
   const updated = { ...current, ...partial };
   saveConfig(updated);
   return updated;
+}
+
+// ── Installed plugin helpers ──────────────────────────────────────────────────
+
+export function getInstalledPlugins(): InstalledPluginRecord[] {
+  return loadConfig().installedPlugins ?? [];
+}
+
+export function getInstalledPlugin(id: string): InstalledPluginRecord | undefined {
+  return getInstalledPlugins().find(p => p.id === id);
+}
+
+export function addInstalledPlugin(record: InstalledPluginRecord): void {
+  const plugins = getInstalledPlugins().filter(p => p.id !== record.id);
+  plugins.push(record);
+  updateConfig({ installedPlugins: plugins });
+}
+
+export function removeInstalledPlugin(id: string): void {
+  const plugins = getInstalledPlugins().filter(p => p.id !== id);
+  updateConfig({ installedPlugins: plugins });
+}
+
+export function updateInstalledPlugin(id: string, partial: Partial<InstalledPluginRecord>): void {
+  const plugins = getInstalledPlugins().map(p =>
+    p.id === id ? { ...p, ...partial } : p,
+  );
+  updateConfig({ installedPlugins: plugins });
+}
+
+/** Directory where remotely-installed plugins are stored */
+export function getExternalPluginsDir(): string {
+  return path.join(app.getPath('userData'), 'plugins');
+}
+
+/** CEP extensions directory on macOS */
+export function getCepExtensionsDir(): string {
+  return path.join(
+    app.getPath('home'),
+    'Library', 'Application Support', 'Adobe', 'CEP', 'extensions',
+  );
 }

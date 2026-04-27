@@ -13,6 +13,9 @@ const ManifestSchema = z.object({
   description: z.string(),
   author: z.string().optional(),
   main: z.string().default('src/index.ts'),
+  repository: z.string().optional(),
+  minSdkVersion: z.string().optional(),
+  hasCep: z.boolean().optional(),
   commands: z.array(z.object({
     id: z.string(),
     name: z.string(),
@@ -49,6 +52,7 @@ const ManifestSchema = z.object({
 
 export class PluginLoader {
   private watcher: chokidar.FSWatcher | null = null;
+  private additionalDirs: string[] = [];
 
   constructor(
     private pluginsDir: string,
@@ -56,8 +60,25 @@ export class PluginLoader {
     private eventBus: EventBus,
   ) {}
 
+  /** Register additional directories to scan for plugins (e.g. userData/plugins/) */
+  addPluginDirectory(dir: string): void {
+    if (!this.additionalDirs.includes(dir)) {
+      this.additionalDirs.push(dir);
+    }
+  }
+
   async scanAndLoad(): Promise<void> {
-    const absDir = path.resolve(this.pluginsDir);
+    // Scan primary plugins dir (monorepo plugins/)
+    await this.scanDirectory(this.pluginsDir);
+
+    // Scan additional dirs (externally installed plugins)
+    for (const dir of this.additionalDirs) {
+      await this.scanDirectory(dir);
+    }
+  }
+
+  private async scanDirectory(dirPath: string): Promise<void> {
+    const absDir = path.resolve(dirPath);
     if (!fs.existsSync(absDir)) {
       console.log(`[PluginLoader] Plugins directory not found: ${absDir}`);
       return;
