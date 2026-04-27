@@ -18,7 +18,11 @@ export function CuttingBoardPage(): React.ReactElement {
     const saved = localStorage.getItem('cuttingBoard:activeTab');
     return (saved === 'cut-watcher' || saved === 'cut-finder' || saved === 'training') ? saved : 'cut-watcher';
   });
-  const changeTab = (t: Tab) => { setTab(t); localStorage.setItem('cuttingBoard:activeTab', t); };
+  const changeTab = (t: Tab) => {
+    setTab(t);
+    localStorage.setItem('cuttingBoard:activeTab', t);
+    if (t === 'training') cb.refresh();
+  };
   const cb = useCuttingBoard();
 
   return (
@@ -74,6 +78,9 @@ export function CuttingBoardPage(): React.ReactElement {
             postTrainResult={cb.postTrainResult}
             cloudRegistry={cb.cloudRegistry}
             dismissPostTrain={cb.dismissPostTrain}
+            trainError={cb.trainError}
+            dismissTrainError={cb.dismissTrainError}
+            machineId={cb.machineId}
           />
         )}
       </div>

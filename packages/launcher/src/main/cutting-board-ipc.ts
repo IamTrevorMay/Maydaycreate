@@ -34,6 +34,53 @@ function openDb(): Database.Database | null {
   return new Database(dbPath, { readonly: true });
 }
 
+/**
+ * Check if any machine in the cloud registry has a better model than local,
+ * and if so, download and apply it via the set-cloud-model command.
+ */
+async function syncBestCloudModel(config: { supabaseUrl: string; supabaseAnonKey: string; machineId: string; serverPort: number }) {
+  const supabase = createClient(config.supabaseUrl, config.supabaseAnonKey);
+  const { data, error } = await supabase
+    .from('autocut_models')
+    .select('machine_id, version, trained_at, training_size, accuracy, model_json')
+    .order('accuracy', { ascending: false })
+    .order('training_size', { ascending: false })
+    .limit(1);
+
+  if (error || !data || data.length === 0) return;
+  const best = data[0];
+
+  // Skip if the best model is from this machine (we already have it)
+  if (best.machine_id === config.machineId) return;
+
+  // Send to server plugin for comparison — it will only accept if better than local
+  const serverBase = `http://localhost:${config.serverPort}/api/plugins/cutting-board/command`;
+  const rawTrained = best.trained_at;
+  const trainedAt = typeof rawTrained === 'string' ? new Date(rawTrained).getTime() : (rawTrained as number);
+  const cloudModel = {
+    version: best.version,
+    accuracy: best.accuracy,
+    trainingSize: best.training_size,
+    trainedAt,
+    classifier: best.model_json?.classifier,
+    regressors: best.model_json?.regressors,
+  };
+
+  if (!cloudModel.classifier) return; // Invalid model data
+
+  const res = await fetch(`${serverBase}/set-cloud-model`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(cloudModel),
+  });
+  if (res.ok) {
+    const result = await res.json();
+    if (result.success && result.result?.accepted) {
+      console.log(`[CuttingBoard] Adopted better cloud model v${best.version} from machine ${best.machine_id} (${(best.accuracy * 100).toFixed(1)}% accuracy)`);
+    }
+  }
+}
+
 function getAggregateStatsLocal(): CuttingBoardAggregateStats | null {
   const db = openDb();
   if (!db) return null;
@@ -456,16 +503,27 @@ export function registerCuttingBoardHandlers(): void {
         return [];
       }
 
-      return (data ?? []).map((row, i) => ({
-        id: `${row.machine_id}:${row.version}`,
-        machineId: row.machine_id as string,
-        machineName: (row.machine_name as string) || row.machine_id as string,
-        version: row.version as number,
-        trainedAt: row.trained_at as number,
-        trainingSize: row.training_size as number,
-        accuracy: row.accuracy as number,
-        isBest: i === 0,
-      }));
+      const rows = (data ?? []).map((row, i) => {
+        const rawTrained = row.trained_at;
+        const trainedAt = typeof rawTrained === 'string' ? new Date(rawTrained).getTime() : (rawTrained as number);
+        return {
+          id: `${row.machine_id}:${row.version}`,
+          machineId: row.machine_id as string,
+          machineName: (row.machine_name as string) || row.machine_id as string,
+          version: row.version as number,
+          trainedAt,
+          trainingSize: row.training_size as number,
+          accuracy: row.accuracy as number,
+          isBest: i === 0,
+        };
+      });
+
+      // Opportunistically adopt the best cloud model if it beats local
+      syncBestCloudModel(config).catch(err =>
+        console.error('[CuttingBoard] Background cloud model sync failed:', err)
+      );
+
+      return rows;
     } catch (err) {
       console.error('[CuttingBoard] getCloudRegistry error:', err);
       return [];
@@ -475,60 +533,37 @@ export function registerCuttingBoardHandlers(): void {
   ipcMain.handle('cuttingBoard:trainModel', async () => {
     const config = loadConfig();
 
-    // Step 1: Push unsynced local records to Supabase before training
-    // This ensures the cloud pool has our latest data
+    // Step 0: Check if another machine trained very recently (soft coordination lock)
     if (config.supabaseUrl && config.supabaseAnonKey) {
       try {
-        const serverBase = `http://localhost:${config.serverPort}/api/plugins/cutting-board/command`;
-        const syncRes = await fetch(`${serverBase}/sync-data`, {
-          method: 'POST', headers: { 'Content-Type': 'application/json' },
-        });
-        if (syncRes.ok) {
-          const syncData = await syncRes.json();
-          const data = syncData.success ? syncData.result : null;
-          if (data?.sessions?.length > 0 || data?.records?.length > 0) {
-            const supabase = createClient(config.supabaseUrl, config.supabaseAnonKey);
-            // Push sessions
-            if (data.sessions?.length > 0) {
-              await supabase.from('sessions').upsert(data.sessions.map((s: any) => ({
-                local_id: s.id, machine_id: config.machineId, machine_name: config.machineName,
-                sequence_id: s.sequenceId, sequence_name: s.sequenceName,
-                session_name: s.sessionName, started_at: s.startedAt, ended_at: s.endedAt,
-                total_edits: s.totalEdits, video_id: s.videoId,
-              })), { onConflict: 'machine_id,local_id' });
-            }
-            // Push records
-            if (data.records?.length > 0) {
-              const BATCH = 500;
-              for (let i = 0; i < data.records.length; i += BATCH) {
-                const batch = data.records.slice(i, i + BATCH).map((r: any) => ({
-                  local_id: r.id, machine_id: config.machineId, session_local_id: r.sessionId,
-                  edit_type: r.editType, edit_point_time: r.editPointTime,
-                  clipName: r.clipName, mediaPath: r.mediaPath,
-                  trackIndex: r.trackIndex, trackType: r.trackType,
-                  rating: r.rating, isUndo: r.isUndo, boosted: r.boosted,
-                  intent_tags: r.intentTags, detectedAt: r.detectedAt,
-                  video_id: data.sessions?.find((s: any) => s.id === r.sessionId)?.videoId ?? null,
-                }));
-                await supabase.from('cut_records').upsert(batch, { onConflict: 'machine_id,local_id' });
-              }
-            }
-            // Mark as synced
-            await fetch(`${serverBase}/mark-synced`, {
-              method: 'POST', headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({
-                table: 'sessions', ids: data.sessions?.map((s: any) => s.id) ?? [],
-              }),
-            });
-            await fetch(`${serverBase}/mark-synced`, {
-              method: 'POST', headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({
-                table: 'cut_records', ids: data.records?.map((r: any) => r.id) ?? [],
-              }),
-            });
-            console.log(`[CuttingBoard] Pre-train sync: ${data.sessions?.length ?? 0} sessions, ${data.records?.length ?? 0} records pushed to Supabase`);
-          }
+        const supabase = createClient(config.supabaseUrl, config.supabaseAnonKey);
+        const recentCutoff = new Date(Date.now() - 60_000).toISOString();
+        const { data: recentModels } = await supabase
+          .from('autocut_models')
+          .select('machine_id, machine_name, uploaded_at')
+          .neq('machine_id', config.machineId)
+          .gt('uploaded_at', recentCutoff)
+          .limit(1);
+        if (recentModels && recentModels.length > 0) {
+          const other = recentModels[0];
+          const name = (other.machine_name as string) || (other.machine_id as string);
+          throw new Error(
+            `Another machine ("${name}") just finished training less than a minute ago. ` +
+            'Wait a moment and try again to avoid overwriting their model.'
+          );
         }
+      } catch (err) {
+        // Re-throw coordination errors, ignore network errors
+        if (err instanceof Error && err.message.includes('Another machine')) throw err;
+        console.error('[CuttingBoard] Training coordination check failed:', err);
+      }
+    }
+
+    // Step 1: Push unsynced local records to Supabase before training
+    // Reuses the same sync function as the periodic 60s auto-sync
+    if (config.supabaseUrl && config.supabaseAnonKey) {
+      try {
+        await syncCutWatcherToSupabase();
       } catch (err) {
         console.error('[CuttingBoard] Pre-train sync failed (continuing with cloud data as-is):', err);
       }
@@ -566,7 +601,17 @@ export function registerCuttingBoardHandlers(): void {
       }
     }
 
-    // Step 3: Train — cloud pool is source of truth; falls back to local if no Supabase
+    // Step 3: Train — cloud pool is source of truth
+    // If Supabase is configured but cloud fetch returned nothing, warn the user instead of
+    // silently falling back to local-only data (violates "cloud is source of truth" design)
+    const supabaseConfigured = !!(config.supabaseUrl && config.supabaseAnonKey);
+    if (supabaseConfigured && cloudPool.length === 0) {
+      throw new Error(
+        'Could not fetch training data from Supabase. Check your internet connection and Supabase credentials in Settings. ' +
+        'Training requires cloud data to ensure all machines contribute to the model.'
+      );
+    }
+
     const url = `http://localhost:${config.serverPort}/api/plugins/cutting-board/command/train-model`;
     const res = await fetch(url, {
       method: 'POST',
@@ -596,7 +641,7 @@ export function registerCuttingBoardHandlers(): void {
                 machine_id: config.machineId,
                 machine_name: config.machineName,
                 version: model.version,
-                trained_at: model.trainedAt,
+                trained_at: new Date(model.trainedAt).toISOString(),
                 training_size: model.trainingSize,
                 accuracy: model.accuracy,
                 model_json: { classifier: model.classifier, regressors: model.regressors },
@@ -607,6 +652,15 @@ export function registerCuttingBoardHandlers(): void {
         }
       } catch (err) {
         console.error('[CuttingBoard] Cloud push failed:', err);
+      }
+    }
+
+    // After pushing our model, check if another machine has a better one and adopt it
+    if (config.supabaseUrl && config.supabaseAnonKey) {
+      try {
+        await syncBestCloudModel(config);
+      } catch (err) {
+        console.error('[CuttingBoard] Post-train cloud model sync failed:', err);
       }
     }
 
@@ -758,7 +812,7 @@ export function registerCuttingBoardHandlers(): void {
             machine_id: config.machineId,
             machine_name: config.machineName,
             version: model.version,
-            trained_at: model.trainedAt,
+            trained_at: new Date(model.trainedAt).toISOString(),
             training_size: model.trainingSize,
             accuracy: model.accuracy,
             model_json: { classifier: model.classifier, regressors: model.regressors },
@@ -847,8 +901,11 @@ export function registerCuttingBoardHandlers(): void {
   ipcMain.handle('cuttingBoard:getTrainingDataSummary', async () => {
     const config = loadConfig();
 
-    // Get the last training timestamp (from cloud registry or local)
-    let lastTrainedAt = 0;
+    // Get the last training timestamp — check BOTH cloud and local, use the most recent.
+    // This handles: cloud push failed (local is newer) or another machine trained (cloud is newer).
+    let cloudTrainedAt = 0;
+    let localTrainedAt = 0;
+
     if (config.supabaseUrl && config.supabaseAnonKey) {
       try {
         const supabase = createClient(config.supabaseUrl, config.supabaseAnonKey);
@@ -858,44 +915,60 @@ export function registerCuttingBoardHandlers(): void {
           .order('trained_at', { ascending: false })
           .limit(1);
         if (data && data.length > 0) {
-          // trained_at could be epoch ms or ISO string — normalize to epoch ms
           const raw = data[0].trained_at;
-          lastTrainedAt = typeof raw === 'string' ? new Date(raw).getTime() : (raw as number);
+          cloudTrainedAt = typeof raw === 'string' ? new Date(raw).getTime() : (raw as number);
         }
       } catch (err) {
         console.error('[CuttingBoard] Failed to fetch last trained_at from Supabase:', err);
       }
     }
-    if (lastTrainedAt === 0) {
+
+    {
       const db = openDb();
       if (db) {
         try {
           const row = db.prepare('SELECT MAX(trained_at) as t FROM model_training_runs').get() as { t: number | null };
-          lastTrainedAt = row?.t ?? 0;
+          localTrainedAt = row?.t ?? 0;
+        } finally { db.close(); }
+      }
+    }
+
+    const lastTrainedAt = Math.max(cloudTrainedAt, localTrainedAt);
+
+    // Get local unsynced count (cheap SQLite query)
+    let unsyncedCount = 0;
+    {
+      const db = openDb();
+      if (db) {
+        try {
+          const row = db.prepare('SELECT COUNT(*) as c FROM cut_records WHERE synced_at IS NULL').get() as { c: number };
+          unsyncedCount = row?.c ?? 0;
         } finally { db.close(); }
       }
     }
 
     // Query Supabase for cloud-wide counts since last train
-    // detected_at in Supabase is stored as epoch ms (bigint)
+    // detected_at in Supabase is stored as ISO 8601 string (converted on push at line 327)
+    // so we must compare with an ISO string, not epoch ms
+    const lastTrainedIso = lastTrainedAt > 0 ? new Date(lastTrainedAt).toISOString() : new Date(0).toISOString();
     if (config.supabaseUrl && config.supabaseAnonKey) {
       try {
         const supabase = createClient(config.supabaseUrl, config.supabaseAnonKey);
 
         const { count: total, error: totalErr } = await supabase.from('cut_records').select('*', { count: 'exact', head: true })
-          .eq('is_undo', false).gt('detected_at', lastTrainedAt);
+          .eq('is_undo', false).gt('detected_at', lastTrainedIso);
         if (totalErr) console.error('[CuttingBoard] training summary total error:', totalErr.message);
 
         const { count: unrated } = await supabase.from('cut_records').select('*', { count: 'exact', head: true })
-          .eq('is_undo', false).is('rating', null).gt('detected_at', lastTrainedAt);
+          .eq('is_undo', false).is('rating', null).gt('detected_at', lastTrainedIso);
         const { count: untagged } = await supabase.from('cut_records').select('*', { count: 'exact', head: true })
-          .eq('is_undo', false).or('intent_tags.is.null,intent_tags.eq.[]').gt('detected_at', lastTrainedAt);
+          .eq('is_undo', false).or('intent_tags.is.null,intent_tags.eq.[]').gt('detected_at', lastTrainedIso);
         const { count: boosted } = await supabase.from('cut_records').select('*', { count: 'exact', head: true })
-          .eq('is_undo', false).eq('boosted', true).gt('detected_at', lastTrainedAt);
+          .eq('is_undo', false).eq('boosted', true).gt('detected_at', lastTrainedIso);
         const { count: bad } = await supabase.from('cut_records').select('*', { count: 'exact', head: true })
-          .eq('is_undo', false).eq('rating', 0).gt('detected_at', lastTrainedAt);
+          .eq('is_undo', false).eq('rating', 0).gt('detected_at', lastTrainedIso);
 
-        console.log(`[CuttingBoard] Training summary: ${total} new records since last train (lastTrainedAt=${lastTrainedAt})`);
+        console.log(`[CuttingBoard] Training summary: ${total} new records since last train (lastTrainedIso=${lastTrainedIso})`);
 
         const t = total ?? 0;
         const ur = unrated ?? 0;
@@ -908,6 +981,7 @@ export function registerCuttingBoardHandlers(): void {
           untaggedCount: ut,
           boostedCount: boosted ?? 0,
           badCount: bad ?? 0,
+          unsyncedCount,
         };
       } catch (err) {
         console.error('[CuttingBoard] Cloud training summary failed, falling back to local:', err);
@@ -920,7 +994,7 @@ export function registerCuttingBoardHandlers(): void {
       const res = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' } });
       if (res.ok) {
         const data = await res.json();
-        if (data.success) return data.result;
+        if (data.success) return { ...data.result, unsyncedCount };
       }
     } catch {}
 

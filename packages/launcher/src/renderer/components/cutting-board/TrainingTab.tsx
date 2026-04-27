@@ -9,7 +9,7 @@ import type { LocalTrainResult } from '../../hooks/useCuttingBoard.js';
 
 const MIN_REPS = 30;
 
-export function TrainingTab({ trainingDataSummary, trainingRuns, training, trainModel, postTrainResult, cloudRegistry, dismissPostTrain }: {
+export function TrainingTab({ trainingDataSummary, trainingRuns, training, trainModel, postTrainResult, cloudRegistry, dismissPostTrain, trainError, dismissTrainError, machineId }: {
   trainingDataSummary: CuttingBoardTrainingDataSummary | null;
   trainingRuns: CuttingBoardTrainingRun[];
   training: boolean;
@@ -17,12 +17,23 @@ export function TrainingTab({ trainingDataSummary, trainingRuns, training, train
   postTrainResult: LocalTrainResult | null;
   cloudRegistry: CloudTrainingRun[];
   dismissPostTrain: () => void;
+  trainError: string | null;
+  dismissTrainError: () => void;
+  machineId: string;
 }): React.ReactElement {
   const [monsterState, setMonsterState] = useState<'idle' | 'working-out' | 'celebrating'>('idle');
   const [workoutProgress, setWorkoutProgress] = useState(0);
 
   const totalReps = trainingDataSummary?.totalRecords ?? 0;
   const canTrain = totalReps >= MIN_REPS && !training && !postTrainResult;
+
+  // Reset monster on training error
+  useEffect(() => {
+    if (trainError && monsterState === 'working-out') {
+      setMonsterState('idle');
+      setWorkoutProgress(0);
+    }
+  }, [trainError, monsterState]);
 
   // Animate progress during training
   useEffect(() => {
@@ -41,12 +52,7 @@ export function TrainingTab({ trainingDataSummary, trainingRuns, training, train
     return () => clearInterval(interval);
   }, [training, monsterState]);
 
-  // Auto-dismiss postTrainResult after 5 seconds
-  useEffect(() => {
-    if (!postTrainResult) return;
-    const timer = setTimeout(dismissPostTrain, 5000);
-    return () => clearTimeout(timer);
-  }, [postTrainResult, dismissPostTrain]);
+  // Post-train result persists until user clicks "Done" — no auto-dismiss
 
   const handleStartWorkout = useCallback(() => {
     setMonsterState('working-out');
@@ -89,6 +95,42 @@ export function TrainingTab({ trainingDataSummary, trainingRuns, training, train
           {training && (
             <div style={{ width: '100%', marginBottom: 12, marginTop: 8 }}>
               <TrainingProgress />
+            </div>
+          )}
+
+          {/* Training error message */}
+          {trainError && (
+            <div style={{
+              width: '100%',
+              background: '#431b1b22',
+              border: `1px solid ${c.status.error}44`,
+              borderRadius: 6,
+              padding: 12,
+              marginBottom: 12,
+            }}>
+              <div style={{ fontSize: 12, color: c.status.error, fontWeight: 600, marginBottom: 8, textAlign: 'center' }}>
+                Training failed
+              </div>
+              <div style={{ fontSize: 11, color: c.text.secondary, marginBottom: 8, textAlign: 'center' }}>
+                {trainError}
+              </div>
+              <div style={{ textAlign: 'center' }}>
+                <button
+                  onClick={dismissTrainError}
+                  style={{
+                    padding: '6px 16px',
+                    background: c.bg.tertiary,
+                    border: 'none',
+                    borderRadius: 4,
+                    color: c.text.primary,
+                    fontSize: 11,
+                    fontWeight: 600,
+                    cursor: 'pointer',
+                  }}
+                >
+                  Dismiss
+                </button>
+              </div>
             </div>
           )}
 
@@ -152,7 +194,7 @@ export function TrainingTab({ trainingDataSummary, trainingRuns, training, train
 
         {/* Right — Personal Records */}
         <div style={{ flex: 1 }}>
-          <PersonalRecordsPanel trainingRuns={trainingRuns} cloudRegistry={cloudRegistry} />
+          <PersonalRecordsPanel trainingRuns={trainingRuns} cloudRegistry={cloudRegistry} machineId={machineId} />
         </div>
       </div>
     </div>

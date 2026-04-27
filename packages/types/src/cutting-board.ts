@@ -69,4 +69,5 @@ export interface CuttingBoardTrainingDataSummary {
   untaggedCount: number;
   boostedCount: number;
   badCount: number;
+  unsyncedCount: number;
 }

@@ -3,9 +3,10 @@ import { c } from '../../styles.js';
 import { MiniStat, formatRelativeTime } from './shared.js';
 import type { CuttingBoardTrainingRun, CloudTrainingRun } from '@mayday/types';
 
-export function PersonalRecordsPanel({ trainingRuns, cloudRegistry }: {
+export function PersonalRecordsPanel({ trainingRuns, cloudRegistry, machineId }: {
   trainingRuns: CuttingBoardTrainingRun[];
   cloudRegistry: CloudTrainingRun[];
+  machineId: string;
 }): React.ReactElement {
   const hasCloud = cloudRegistry.length > 0;
   const bestCloud = cloudRegistry.find(r => r.isBest) ?? cloudRegistry[0] ?? null;
@@ -51,13 +52,15 @@ export function PersonalRecordsPanel({ trainingRuns, cloudRegistry }: {
                   </tr>
                 </thead>
                 <tbody>
-                  {cloudRegistry.map(run => (
+                  {cloudRegistry.map(run => {
+                    const isMe = run.machineId === machineId;
+                    return (
                     <tr key={run.id} style={{
                       borderTop: `1px solid ${c.border.default}`,
-                      background: run.isBest ? '#4ade8012' : undefined,
+                      background: run.isBest ? '#4ade8012' : isMe ? '#60a5fa08' : undefined,
                     }}>
-                      <td style={{ padding: '4px 6px', color: c.text.primary }}>
-                        {run.isBest ? '\u2B50 ' : ''}{run.machineName}
+                      <td style={{ padding: '4px 6px', color: isMe ? c.accent.primary : c.text.primary, fontWeight: isMe ? 600 : 400 }}>
+                        {run.isBest ? '\u2B50 ' : ''}{run.machineName}{isMe ? ' (You)' : ''}
                       </td>
                       <td style={{ padding: '4px 6px', color: c.text.primary }}>v{run.version}</td>
                       <td style={{ padding: '4px 6px', color: c.text.secondary }}>{new Date(run.trainedAt).toLocaleDateString()}</td>
@@ -71,7 +74,8 @@ export function PersonalRecordsPanel({ trainingRuns, cloudRegistry }: {
                         {Math.round(run.accuracy * 100)}%
                       </td>
                     </tr>
-                  ))}
+                    );
+                  })}
                 </tbody>
               </table>
             </div>

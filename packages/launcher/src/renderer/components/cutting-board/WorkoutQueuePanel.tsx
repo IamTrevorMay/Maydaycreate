@@ -74,6 +74,21 @@ export function WorkoutQueuePanel({ summary }: {
           Ready to train!
         </div>
       )}
+
+      {/* Sync status */}
+      <div style={{ marginTop: 10, fontSize: 10, color: c.text.disabled, display: 'flex', alignItems: 'center', gap: 4 }}>
+        {summary.unsyncedCount > 0 ? (
+          <>
+            <span style={{ color: c.status.warning }}>{'●'}</span>
+            <span>{summary.unsyncedCount} record{summary.unsyncedCount !== 1 ? 's' : ''} pending sync</span>
+          </>
+        ) : (
+          <>
+            <span style={{ color: c.status.success }}>{'●'}</span>
+            <span>All records synced to cloud</span>
+          </>
+        )}
+      </div>
     </div>
   );
 }

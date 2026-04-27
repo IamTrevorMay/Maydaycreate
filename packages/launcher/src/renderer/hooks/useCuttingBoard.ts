@@ -18,6 +18,7 @@ export function useCuttingBoard() {
   const [training, setTraining] = useState(false);
   const [postTrainResult, setPostTrainResult] = useState<LocalTrainResult | null>(null);
   const [loaded, setLoaded] = useState(false);
+  const [machineId, setMachineId] = useState<string>('');
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   const refresh = useCallback(async () => {
@@ -55,13 +56,17 @@ export function useCuttingBoard() {
 
   useEffect(() => {
     refresh().then(() => setLoaded(true));
-    intervalRef.current = setInterval(refresh, 10_000);
+    ipc.config.get().then(cfg => setMachineId(cfg.machineId)).catch(() => {});
+    intervalRef.current = setInterval(refresh, 30_000);
     return () => { if (intervalRef.current) clearInterval(intervalRef.current); };
-  }, [refresh]);
+  }, [refresh, ipc]);
+
+  const [trainError, setTrainError] = useState<string | null>(null);
 
   const trainModel = useCallback(async () => {
     setTraining(true);
     setPostTrainResult(null);
+    setTrainError(null);
     try {
       const result = await ipc.cuttingBoard.trainModel();
       if (result && result.version != null) {
@@ -75,6 +80,10 @@ export function useCuttingBoard() {
         setPostTrainResult({ version: result.version, accuracy: result.accuracy, trainingSize: result.trainingSize });
       }
       await refresh();
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      setTrainError(msg);
+      console.error('[CuttingBoard] Training failed:', msg);
     } finally {
       setTraining(false);
     }
@@ -82,6 +91,10 @@ export function useCuttingBoard() {
 
   const dismissPostTrain = useCallback(() => {
     setPostTrainResult(null);
+  }, []);
+
+  const dismissTrainError = useCallback(() => {
+    setTrainError(null);
   }, []);
 
   const deleteSession = useCallback(async (sessionId: number) => {
@@ -96,7 +109,7 @@ export function useCuttingBoard() {
 
   return {
     stats, trainingRuns, sessions, trainingDataSummary, training, trainModel, refresh, loaded,
-    postTrainResult, cloudRegistry, dismissPostTrain,
-    deleteSession, nameSession,
+    postTrainResult, cloudRegistry, dismissPostTrain, trainError, dismissTrainError,
+    deleteSession, nameSession, machineId,
   };
 }
