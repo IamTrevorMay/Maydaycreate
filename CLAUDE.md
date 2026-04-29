@@ -203,14 +203,16 @@ Created `plugins/premiere-pro-sync/` with full sync engine lifecycle.
 All 7 plugin manifests updated with `repository`, `minSdkVersion`, `hasCep` fields. Plugin build tooling template created in `templates/plugin-repo/` (build.js, package.js, release.yml GitHub Action, README template).
 
 **Extraction order** (when creating independent repos):
-1. silence-remover — No CEP, no launcher IPC. Cleanest.
+1. ✅ silence-remover — Extracted 2026-04-29. Repo: `IamTrevorMay/mayday-silence-remover`, release v1.0.0.
 2. analyzer — Some launcher IPC.
 3. preset-vault — Has CEP panel components.
 4. stream-deck-excalibur (shortcuts) — Has CEP panel, hardware services.
 5. pathguard — WIP, already isolated.
 6. cutting-board — Most complex, heavy launcher IPC.
 
-**To extract a plugin**: Create GitHub repo, copy plugin source + build template, `npm run package`, create release, update `plugin-compatibility.json`.
+**To extract a plugin**: Create GitHub repo, copy plugin source + `src/sdk.ts` shim + build template, `npm run package`, create release, update `plugin-compatibility.json`.
+
+**SDK bundling fix (2026-04-29)**: Template `build.js` no longer externalizes `@mayday/sdk`/`@mayday/types`. Instead, plugins include a `src/sdk.ts` shim with `definePlugin` + needed type interfaces. esbuild's `alias` option maps `@mayday/sdk` → `src/sdk.ts` so the source code can use standard imports unchanged. This ensures pre-built `.mjs` plugins load standalone via `import(path)` without needing `@mayday/sdk` in `node_modules`.
 
 ### Phase 5: Launcher repo cleanup — 🔲 NOT STARTED (after plugin repos validated)
 ### Phase 6: Cutting Board IPC migration — 🔲 NOT STARTED (last step)

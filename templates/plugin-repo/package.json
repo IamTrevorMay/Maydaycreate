@@ -9,9 +9,5 @@
   },
   "devDependencies": {
     "esbuild": "^0.20.0"
-  },
-  "dependencies": {
-    "@mayday/sdk": "file:../packages/sdk",
-    "@mayday/types": "file:../packages/types"
   }
 }

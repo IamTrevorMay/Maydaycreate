@@ -35,14 +35,19 @@ async function build() {
     format: 'esm',
     platform: 'node',
     outfile: path.join(DIST, 'server', 'index.mjs'),
+    // SDK is bundled into output (not external) — definePlugin is tiny and
+    // type imports are erased. Use alias to resolve from local sdk.ts shim
+    // so builds work without @mayday/sdk in node_modules.
+    alias: {
+      '@mayday/sdk': path.join(ROOT, 'src', 'sdk.ts'),
+      '@mayday/types': path.join(ROOT, 'src', 'sdk.ts'),
+    },
     external: [
       // Node built-ins
       'fs', 'path', 'os', 'crypto', 'util', 'events', 'stream', 'url',
       'http', 'https', 'net', 'child_process', 'worker_threads',
       // Native modules
       'better-sqlite3', 'brain.js', 'gpu.js',
-      // SDK (resolved from launcher's node_modules at runtime)
-      '@mayday/sdk', '@mayday/types',
     ],
   });
 
