@@ -92,7 +92,14 @@ interface GitHubRelease {
 }
 
 function getGhToken(): string {
-  return loadConfig().ghToken || process.env.GITHUB_TOKEN || '';
+  const configured = loadConfig().ghToken || process.env.GITHUB_TOKEN || '';
+  if (configured) return configured;
+  // Fall back to gh CLI auth token
+  try {
+    return execSync('gh auth token', { encoding: 'utf-8', stdio: ['pipe', 'pipe', 'pipe'] }).trim();
+  } catch {
+    return '';
+  }
 }
 
 async function fetchJson<T>(url: string): Promise<T> {
@@ -102,7 +109,10 @@ async function fetchJson<T>(url: string): Promise<T> {
       'Accept': 'application/vnd.github+json',
     };
     const token = getGhToken();
-    if (token) headers['Authorization'] = `token ${token}`;
+    if (token) {
+      const prefix = token.startsWith('ghp_') ? 'token' : 'Bearer';
+      headers['Authorization'] = `${prefix} ${token}`;
+    }
 
     const parsedUrl = new URL(url);
     const options = {
@@ -144,7 +154,10 @@ async function downloadFile(url: string, dest: string): Promise<void> {
       'Accept': 'application/octet-stream',
     };
     const token = getGhToken();
-    if (token) headers['Authorization'] = `token ${token}`;
+    if (token) {
+      const prefix = token.startsWith('ghp_') ? 'token' : 'Bearer';
+      headers['Authorization'] = `${prefix} ${token}`;
+    }
 
     const parsedUrl = new URL(url);
     const options = {
@@ -397,7 +410,7 @@ export async function uninstallPlugin(pluginId: string): Promise<void> {
   const record = getInstalledPlugin(pluginId);
   if (!record) throw new Error(`Plugin ${pluginId} is not installed`);
 
-  // Deactivate
+  // Deactivate and remove from lifecycle manager
   const bridge = getServerBridge();
   if (bridge) {
     try {
@@ -405,6 +418,7 @@ export async function uninstallPlugin(pluginId: string): Promise<void> {
     } catch {
       // May not be active
     }
+    bridge.lifecycle.removePlugin(pluginId);
   }
 
   // Remove plugin files

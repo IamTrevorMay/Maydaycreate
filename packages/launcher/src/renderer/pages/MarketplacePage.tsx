@@ -462,7 +462,7 @@ function InstalledPluginCard({
           >
             {isActive ? 'Disable' : 'Enable'}
           </button>
-          {manifest.repository && (
+          {plugin.isExternal && (
             <button
               onClick={() => onUninstall(manifest.id)}
               disabled={installing}

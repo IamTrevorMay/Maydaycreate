@@ -5,6 +5,8 @@ export interface LauncherPluginInfo {
   status: PluginStatus;
   installedAt?: number;
   syncedFromRemote?: boolean;
+  /** True if installed via Plugin Manager (can be uninstalled). False for monorepo plugins. */
+  isExternal?: boolean;
 }
 
 export interface ServerStatus {

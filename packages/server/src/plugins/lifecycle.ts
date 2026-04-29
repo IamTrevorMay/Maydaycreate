@@ -194,6 +194,11 @@ export class PluginLifecycle {
       .map(e => e.manifest);
   }
 
+  /** Remove a plugin from the in-memory registry (after uninstall) */
+  removePlugin(pluginId: string): void {
+    this.plugins.delete(pluginId);
+  }
+
   getAllPlugins(): Array<{ manifest: PluginManifest; status: PluginStatus }> {
     return [...this.plugins.values()].map(e => ({
       manifest: e.manifest,

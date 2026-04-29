@@ -18,6 +18,7 @@ import {
   uninstallPlugin,
   checkForPluginUpdates,
 } from './plugin-manager.js';
+import { getInstalledPlugin } from './config-store.js';
 
 let _youtubeAnalyzer: YouTubeAnalyzer | null = null;
 
@@ -87,7 +88,10 @@ export function registerIpcHandlers(): void {
   ipcMain.handle('plugins:getAll', () => {
     const bridge = getServerBridge();
     if (!bridge) return [];
-    return bridge.lifecycle.getAllPlugins();
+    return bridge.lifecycle.getAllPlugins().map(p => ({
+      ...p,
+      isExternal: !!getInstalledPlugin(p.manifest.id),
+    }));
   });
 
   ipcMain.handle('plugins:enable', async (_e, id: string) => {
