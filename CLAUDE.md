@@ -195,10 +195,8 @@ Created `plugins/premiere-pro-sync/` with full sync engine lifecycle.
 
 **Modified files**:
 - `packages/launcher/src/main/index.ts` — Sets MAYDAY_MACHINE_ID, MAYDAY_MACHINE_NAME, MAYDAY_SYNC_SOURCE_PATH env vars for plugins
-- `packages/launcher/src/main/ipc-handlers.ts` — Sync/history IPC handlers now proxy through `lifecycle.executeCommand('premiere-pro-sync', ...)` with fallback to legacy `_syncEngine`
-- `packages/launcher/src/main/ipc-handlers.ts` — `bridgeSyncEvents()` listens for plugin events too
-
-**Migration pattern**: IPC handlers try plugin first, fall back to legacy engine. Both paths coexist during transition. Legacy sync code can be removed once plugin is validated.
+- `packages/launcher/src/main/ipc-handlers.ts` — Sync/history IPC handlers proxy through `lifecycle.executeCommand('premiere-pro-sync', ...)` (plugin-only, no legacy fallback)
+- `packages/launcher/src/main/ipc-handlers.ts` — `bridgeSyncEvents()` listens for plugin events
 ### Phase 4: Prepare plugins for extraction — ✅ MANIFEST UPDATES COMPLETE (2026-04-27)
 All 7 plugin manifests updated with `repository`, `minSdkVersion`, `hasCep` fields. Plugin build tooling template created in `templates/plugin-repo/` (build.js, package.js, release.yml GitHub Action, README template).
 
@@ -214,7 +212,22 @@ All 7 plugin manifests updated with `repository`, `minSdkVersion`, `hasCep` fiel
 
 **SDK bundling fix (2026-04-29)**: Template `build.js` no longer externalizes `@mayday/sdk`/`@mayday/types`. Instead, plugins include a `src/sdk.ts` shim with `definePlugin` + needed type interfaces. esbuild's `alias` option maps `@mayday/sdk` → `src/sdk.ts` so the source code can use standard imports unchanged. This ensures pre-built `.mjs` plugins load standalone via `import(path)` without needing `@mayday/sdk` in `node_modules`.
 
-### Phase 5: Launcher repo cleanup — 🔲 NOT STARTED (after plugin repos validated)
+### Phase 5: Launcher repo cleanup — 🔧 IN PROGRESS (2026-04-29)
+**Step 1 — Legacy SyncEngine removal**: ✅ COMPLETE
+- Removed `SyncEngine`, `SyncWatcher`, `SyncSource` instantiation from `packages/launcher/src/main/index.ts`
+- Removed `discoverSyncSources`, `findVersionDirs`, `findProfileDirs` helper functions (duplicated in premiere-pro-sync plugin)
+- Removed `setSyncEngine`, `_syncEngine` variable, and all legacy fallback paths from `packages/launcher/src/main/ipc-handlers.ts`
+- Removed `registerCutFinderIpc` no-op function
+- Simplified sync/history IPC handlers to plugin-only path (no more try/catch fallback to legacy engine)
+- Removed legacy sync event forwarding from `bridgeSyncEvents()` (only plugin events remain)
+
+**Remaining cleanup** (not yet started):
+- YouTube Analyzer code (`packages/launcher/src/main/youtube/`) — still needed by renderer YouTubePage
+- CuttingBoard IPC handlers (`cutting-board-ipc.ts`, `cutting-board-finder/`, `cutting-board-join.ts`) — still needed by renderer CuttingBoardPage
+- Supabase sync services (`youtube-sync.ts`, `preset-sync.ts`, `streamdeck-sync.ts`) — still needed until plugins self-sync
+- Hardcoded plugin page registrations in `App.tsx` (`registerPageComponent('analyzer', ...)`, `registerPageComponent('cutting-board', ...)`) — still needed until plugins provide their own UI via `rendererEntry`
+- These depend on plugins having their own embedded UI (Phase 6+)
+
 ### Phase 6: Cutting Board IPC migration — 🔲 NOT STARTED (last step)
 
 ## Build Steps (must do after code changes)

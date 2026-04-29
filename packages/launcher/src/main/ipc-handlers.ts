@@ -4,7 +4,6 @@ import fs from 'fs';
 import { z } from 'zod';
 import { getServerBridge, onServerStatus } from './server-bridge.js';
 import { loadConfig, updateConfig } from './config-store.js';
-import type { ConflictResolution } from '@mayday/sync-engine';
 import { migrateSyncSource } from '@mayday/sync-engine';
 import type { BrowserWindow } from 'electron';
 import type { YouTubeAnalyzer } from './youtube/youtube-analyzer.js';
@@ -69,12 +68,7 @@ const ManifestSchema = z.object({
   targetApp: z.enum(['premiere', 'davinci', 'any']).optional(),
 });
 
-let _syncEngine: import('@mayday/sync-engine').SyncEngine | null = null;
 let _win: BrowserWindow | null = null;
-
-export function setSyncEngine(engine: import('@mayday/sync-engine').SyncEngine): void {
-  _syncEngine = engine;
-}
 
 export function setMainWindow(win: BrowserWindow): void {
   _win = win;
@@ -190,109 +184,63 @@ export function registerIpcHandlers(): void {
   ipcMain.handle('sync:getStatus', async () => {
     const bridge = getServerBridge();
     if (!bridge) return { state: 'idle', pendingCount: 0, conflictCount: 0 };
-    try {
-      return await bridge.lifecycle.executeCommand('premiere-pro-sync', 'get-status');
-    } catch {
-      // Plugin may not be loaded yet — fall back to legacy engine
-      return _syncEngine?.getStatus() ?? { state: 'idle', pendingCount: 0, conflictCount: 0 };
-    }
+    return bridge.lifecycle.executeCommand('premiere-pro-sync', 'get-status');
   });
 
   ipcMain.handle('sync:runSync', async () => {
     const bridge = getServerBridge();
-    if (bridge) {
-      try {
-        return await bridge.lifecycle.executeCommand('premiere-pro-sync', 'run-sync');
-      } catch { /* fall through to legacy */ }
-    }
-    if (!_syncEngine) throw new Error('Sync engine not initialized');
-    await _syncEngine.runSync();
+    if (!bridge) throw new Error('Server not running');
+    return bridge.lifecycle.executeCommand('premiere-pro-sync', 'run-sync');
   });
 
   ipcMain.handle('sync:getConflicts', async () => {
     const bridge = getServerBridge();
-    if (bridge) {
-      try {
-        return await bridge.lifecycle.executeCommand('premiere-pro-sync', 'get-conflicts');
-      } catch { /* fall through */ }
-    }
-    return _syncEngine?.getConflicts() ?? [];
+    if (!bridge) return [];
+    return bridge.lifecycle.executeCommand('premiere-pro-sync', 'get-conflicts');
   });
 
-  ipcMain.handle('sync:resolveConflict', async (_e, resolution: ConflictResolution) => {
+  ipcMain.handle('sync:resolveConflict', async (_e, resolution: unknown) => {
     const bridge = getServerBridge();
-    if (bridge) {
-      try {
-        return await bridge.lifecycle.executeCommand('premiere-pro-sync', 'resolve-conflict', resolution);
-      } catch { /* fall through */ }
-    }
-    if (!_syncEngine) throw new Error('Sync engine not initialized');
-    await _syncEngine.resolveConflict(resolution);
+    if (!bridge) throw new Error('Server not running');
+    return bridge.lifecycle.executeCommand('premiere-pro-sync', 'resolve-conflict', resolution);
   });
 
   ipcMain.handle('sync:getSyncLog', async () => {
     const bridge = getServerBridge();
-    if (bridge) {
-      try {
-        return await bridge.lifecycle.executeCommand('premiere-pro-sync', 'get-sync-log');
-      } catch { /* fall through */ }
-    }
-    return _syncEngine?.getSyncLog() ?? [];
+    if (!bridge) return [];
+    return bridge.lifecycle.executeCommand('premiere-pro-sync', 'get-sync-log');
   });
 
   ipcMain.handle('sync:getQueue', async () => {
     const bridge = getServerBridge();
-    if (bridge) {
-      try {
-        return await bridge.lifecycle.executeCommand('premiere-pro-sync', 'get-queue');
-      } catch { /* fall through */ }
-    }
-    return _syncEngine?.getQueue() ?? [];
+    if (!bridge) return [];
+    return bridge.lifecycle.executeCommand('premiere-pro-sync', 'get-queue');
   });
 
   ipcMain.handle('sync:flushQueue', async () => {
     const bridge = getServerBridge();
-    if (bridge) {
-      try {
-        return await bridge.lifecycle.executeCommand('premiere-pro-sync', 'flush-queue');
-      } catch { /* fall through */ }
-    }
-    if (!_syncEngine) throw new Error('Sync engine not initialized');
-    await _syncEngine.flushQueue();
+    if (!bridge) throw new Error('Server not running');
+    return bridge.lifecycle.executeCommand('premiere-pro-sync', 'flush-queue');
   });
 
   // ── History (proxied to premiere-pro-sync plugin) ──────────────────────────
 
   ipcMain.handle('history:list', async () => {
     const bridge = getServerBridge();
-    if (bridge) {
-      try {
-        return await bridge.lifecycle.executeCommand('premiere-pro-sync', 'list-snapshots');
-      } catch { /* fall through */ }
-    }
-    return _syncEngine?.listSnapshots() ?? [];
+    if (!bridge) return [];
+    return bridge.lifecycle.executeCommand('premiere-pro-sync', 'list-snapshots');
   });
 
   ipcMain.handle('history:createSnapshot', async () => {
     const bridge = getServerBridge();
-    if (bridge) {
-      try {
-        return await bridge.lifecycle.executeCommand('premiere-pro-sync', 'create-snapshot');
-      } catch { /* fall through */ }
-    }
-    if (!_syncEngine) throw new Error('Sync engine not initialized');
-    return _syncEngine.createSnapshot();
+    if (!bridge) throw new Error('Server not running');
+    return bridge.lifecycle.executeCommand('premiere-pro-sync', 'create-snapshot');
   });
 
-  ipcMain.handle('history:restore', async (_e, snapshot: import('@mayday/sync-engine').HistorySnapshot) => {
+  ipcMain.handle('history:restore', async (_e, snapshot: unknown) => {
     const bridge = getServerBridge();
-    if (bridge) {
-      try {
-        return await bridge.lifecycle.executeCommand('premiere-pro-sync', 'restore-snapshot', snapshot);
-      } catch { /* fall through */ }
-    }
-    if (!_syncEngine) throw new Error('Sync engine not initialized');
-    _syncEngine.restoreSnapshot(snapshot);
+    if (!bridge) throw new Error('Server not running');
+    return bridge.lifecycle.executeCommand('premiere-pro-sync', 'restore-snapshot', snapshot);
   });
 
   // ── Config ─────────────────────────────────────────────────────────────────
@@ -396,21 +344,8 @@ export function registerYouTubeIpc(): void {
   }
 }
 
-/** No-op — cut-finder handlers now register inside registerCuttingBoardHandlers */
-export function registerCutFinderIpc(): void {
-  // Handlers are registered in cutting-board-ipc.ts
-}
-
 /** Push sync status changes to renderer via IPC events */
 export function bridgeSyncEvents(): void {
-  // Legacy sync engine events
-  if (_syncEngine) {
-    _syncEngine.onStatusChanged((status) => {
-      if (_win && !_win.isDestroyed()) _win.webContents.send('sync:statusChanged', status);
-    });
-  }
-
-  // Plugin-based sync events (premiere-pro-sync emits plugin:premiere-pro-sync:sync-status)
   const bridge = getServerBridge();
   if (bridge?.eventBus) {
     bridge.eventBus.on('plugin:premiere-pro-sync:sync-status', (event: { data: unknown }) => {

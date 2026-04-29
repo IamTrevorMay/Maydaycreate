@@ -6,18 +6,14 @@ import { loadConfig } from './config-store.js';
 import { startEmbeddedServer, getServerBridge, stopEmbeddedServer } from './server-bridge.js';
 import {
   registerIpcHandlers,
-  setSyncEngine,
   setMainWindow,
   setYouTubeAnalyzer,
   registerYouTubeIpc,
-  registerCutFinderIpc,
   bridgeSyncEvents,
   bridgeServerEvents,
   bridgePluginEvents,
 } from './ipc-handlers.js';
 import { createTray, destroyTray } from './tray.js';
-import { SyncEngine, SyncWatcher } from '@mayday/sync-engine';
-import type { SyncSource } from '@mayday/sync-engine';
 import { YouTubeAnalyzer } from './youtube/youtube-analyzer.js';
 import { YouTubeSyncService } from './youtube/youtube-sync.js';
 import { PresetSyncService } from './preset-sync.js';
@@ -182,24 +178,9 @@ app.whenReady().then(async () => {
     process.env.MAYDAY_SYNC_SOURCE_PATH = config.syncSourcePath;
   }
 
-  // Sync engine (legacy — will be removed once premiere-pro-sync plugin is fully validated)
-  const syncEngine = new SyncEngine({
-    syncSourcePath: config.syncSourcePath,
-    machineId: config.machineId,
-    machineName: config.machineName,
-  });
-
-  // Configure sync sources for Premiere Pro configs
-  const syncSources = discoverSyncSources(app.getPath('home'));
-  for (const source of syncSources) {
-    syncEngine.addSyncSource(source);
-  }
-  console.log(`[Launcher] Configured ${syncSources.length} sync source(s):`, syncSources.map(s => s.name).join(', '));
-
   // YouTube analyzer
   const youtubeAnalyzer = new YouTubeAnalyzer();
 
-  setSyncEngine(syncEngine);
   setYouTubeAnalyzer(youtubeAnalyzer);
   registerIpcHandlers();
 
@@ -207,7 +188,6 @@ app.whenReady().then(async () => {
   mainWindow = createWindow();
   setMainWindow(mainWindow);
   registerYouTubeIpc();
-  registerCutFinderIpc();
   bridgeSyncEvents();
   bridgeServerEvents();
 
@@ -278,19 +258,6 @@ app.whenReady().then(async () => {
   });
   streamDeckSync.startPeriodicSync();
 
-  // If sync source is configured, start a sync and watch for remote changes
-  if (config.syncSourcePath) {
-    syncEngine.runSync().catch(err => {
-      console.error('[Launcher] Initial sync failed:', err);
-    });
-
-    const syncWatcher = new SyncWatcher({
-      syncSourcePath: config.syncSourcePath,
-      engine: syncEngine,
-    });
-    syncWatcher.start();
-  }
-
   // Old Elgato SDK plugin installer removed — now using direct USB hardware control
 
   // Auto-updater: wire electron-updater events to renderer
@@ -324,122 +291,3 @@ app.on('window-all-closed', () => {
   }
 });
 
-/**
- * Discover all Premiere Pro sync sources on this machine.
- * Scans for versioned directories and profile directories automatically.
- */
-function discoverSyncSources(homeDir: string): SyncSource[] {
-  const sources: SyncSource[] = [];
-
-  const premiereDocsBase = path.join(homeDir, 'Documents', 'Adobe', 'Premiere Pro');
-  const ameDocsBase = path.join(homeDir, 'Documents', 'Adobe', 'Adobe Media Encoder');
-
-  // Find all Premiere Pro version + profile directories
-  const profileDirs = findProfileDirs(premiereDocsBase);
-
-  for (const { version, profileDir } of profileDirs) {
-    const tag = version; // e.g. "25.0"
-
-    // Keyboard Shortcuts — Mac subfolder contains .kys files
-    const shortcutsDir = path.join(profileDir, 'Mac');
-    sources.push({
-      name: `keyboard-shortcuts-${tag}`,
-      localDir: shortcutsDir,
-      include: ['*.kys'],
-    });
-
-    // Workspaces — Layouts subfolder contains XML workspace files
-    const layoutsDir = path.join(profileDir, 'Layouts');
-    sources.push({
-      name: `workspaces-${tag}`,
-      localDir: layoutsDir,
-      include: ['*.xml'],
-    });
-
-    // Effects Presets — single .prfpset file in profile dir
-    sources.push({
-      name: `effects-presets-${tag}`,
-      localDir: profileDir,
-      include: ['*.prfpset'],
-    });
-  }
-
-  // Export Presets — Adobe Media Encoder PresetTree.xml
-  const ameVersions = findVersionDirs(ameDocsBase);
-  for (const ver of ameVersions) {
-    const presetsDir = path.join(ameDocsBase, ver, 'Presets');
-    sources.push({
-      name: `export-presets-${ver}`,
-      localDir: presetsDir,
-      include: ['*.xml', '*.epr'],
-    });
-  }
-
-  // Motion Graphics Templates — shared across all versions
-  const mogrtsDir = path.join(
-    homeDir, 'Library', 'Application Support', 'Adobe', 'Common', 'Motion Graphics Templates',
-  );
-  sources.push({
-    name: 'graphics-templates',
-    localDir: mogrtsDir,
-    include: ['*.mogrt'],
-  });
-
-  // Excalibur macros — Knights of the Editing Table user data
-  const excaliburDir = path.join(
-    homeDir, 'Library', 'Application Support', 'Knights of the Editing Table',
-  );
-  sources.push({
-    name: 'excalibur-macros',
-    localDir: excaliburDir,
-    include: ['*.json'],
-  });
-
-  // Excalibur scripts
-  const excaliburScriptsDir = path.join(
-    homeDir, 'Documents', 'Knights of the Editing Table', 'Excalibur', 'Scripts',
-  );
-  if (fs.existsSync(excaliburScriptsDir)) {
-    sources.push({
-      name: 'excalibur-scripts',
-      localDir: excaliburScriptsDir,
-    });
-  }
-
-  return sources;
-}
-
-/** Find all version directories (e.g. "24.0", "25.0") under a base path */
-function findVersionDirs(basePath: string): string[] {
-  if (!fs.existsSync(basePath)) return [];
-  try {
-    return fs.readdirSync(basePath, { withFileTypes: true })
-      .filter(e => e.isDirectory() && /^\d+\.\d+$/.test(e.name))
-      .map(e => e.name)
-      .sort();
-  } catch {
-    return [];
-  }
-}
-
-/** Find all Profile-* directories within versioned Premiere Pro directories */
-function findProfileDirs(premiereBase: string): Array<{ version: string; profileDir: string }> {
-  const results: Array<{ version: string; profileDir: string }> = [];
-  const versions = findVersionDirs(premiereBase);
-
-  for (const ver of versions) {
-    const versionDir = path.join(premiereBase, ver);
-    try {
-      const entries = fs.readdirSync(versionDir, { withFileTypes: true });
-      for (const entry of entries) {
-        if (entry.isDirectory() && entry.name.startsWith('Profile-')) {
-          results.push({ version: ver, profileDir: path.join(versionDir, entry.name) });
-        }
-      }
-    } catch {
-      // skip unreadable dirs
-    }
-  }
-
-  return results;
-}
