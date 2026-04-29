@@ -202,13 +202,13 @@ Created `plugins/premiere-pro-sync/` with full sync engine lifecycle.
 ### Phase 4: Prepare plugins for extraction — ✅ MANIFEST UPDATES COMPLETE (2026-04-27)
 All 7 plugin manifests updated with `repository`, `minSdkVersion`, `hasCep` fields. Plugin build tooling template created in `templates/plugin-repo/` (build.js, package.js, release.yml GitHub Action, README template).
 
-**Extraction order** (when creating independent repos):
-1. ✅ silence-remover — Extracted 2026-04-29. Repo: `IamTrevorMay/mayday-silence-remover`, release v1.0.0.
-2. analyzer — Some launcher IPC.
-3. preset-vault — Has CEP panel components.
-4. stream-deck-excalibur (shortcuts) — Has CEP panel, hardware services.
-5. pathguard — WIP, already isolated.
-6. cutting-board — Most complex, heavy launcher IPC.
+**Extraction order** — ALL COMPLETE (2026-04-29):
+1. ✅ silence-remover — `IamTrevorMay/mayday-silence-remover` v1.0.0
+2. ✅ analyzer — `IamTrevorMay/mayday-analyzer` v1.0.0
+3. ✅ preset-vault — `IamTrevorMay/mayday-preset-vault` v1.0.0
+4. ✅ stream-deck-excalibur (shortcuts) — `IamTrevorMay/mayday-shortcuts` v1.0.0
+5. ✅ pathguard — `IamTrevorMay/mayday-pathguard` v1.0.0
+6. ✅ cutting-board — `IamTrevorMay/mayday-cutting-board` v1.0.0
 
 **To extract a plugin**: Create GitHub repo, copy plugin source + `src/sdk.ts` shim + build template, `npm run package`, create release, update `plugin-compatibility.json`.
 
