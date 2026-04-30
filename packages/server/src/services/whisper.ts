@@ -1,10 +1,7 @@
-import { execFile } from 'child_process';
-import { promisify } from 'util';
 import fs from 'fs';
 import path from 'path';
 import os from 'os';
-
-const execFileAsync = promisify(execFile);
+import { trackedExecFile } from './tracked-exec.js';
 
 export class WhisperService {
   private whisperPath: string;
@@ -19,7 +16,7 @@ export class WhisperService {
 
   private async checkAvailability() {
     try {
-      await execFileAsync(this.whisperPath, ['--help']);
+      await trackedExecFile(this.whisperPath, ['--help'], { timeout: 5_000 });
       if (fs.existsSync(this.modelPath)) {
         this.available = true;
         console.log('[Whisper] Service available');
@@ -50,22 +47,22 @@ export class WhisperService {
       fs.writeFileSync(inputPath, Buffer.from(audioBase64, 'base64'));
 
       // Convert to WAV 16kHz mono via ffmpeg
-      await execFileAsync('ffmpeg', [
+      await trackedExecFile('ffmpeg', [
         '-i', inputPath,
         '-ar', '16000',
         '-ac', '1',
         '-f', 'wav',
         '-y',
         wavPath,
-      ]);
+      ], { timeout: 30_000 });
 
       // Run whisper
-      const { stdout } = await execFileAsync(this.whisperPath, [
+      const { stdout } = await trackedExecFile(this.whisperPath, [
         '-m', this.modelPath,
         '-f', wavPath,
         '--no-timestamps',
         '-l', 'en',
-      ], { timeout: 30000 });
+      ], { timeout: 30_000 });
 
       return stdout.trim();
     } finally {

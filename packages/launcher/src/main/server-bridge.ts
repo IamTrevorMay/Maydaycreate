@@ -2,6 +2,7 @@ import { app } from 'electron';
 import path from 'path';
 import { createRequire } from 'module';
 import type { ServerStatus } from '@mayday/types';
+import { killAllTracked as killAllLauncherTracked } from './youtube/tracked-exec';
 
 const require = createRequire(import.meta.url);
 
@@ -129,6 +130,13 @@ export function stopEmbeddedServer(): void {
     clearInterval(_statusInterval);
     _statusInterval = null;
   }
+
+  // Kill all tracked ffmpeg/ffprobe child processes (launcher-side)
+  try { killAllLauncherTracked(); } catch {}
+
+  // Kill all tracked child processes on the server side
+  try { serverInstance?.killAllTracked?.(); } catch {}
+
   if (!serverInstance) return;
   try {
     serverInstance.streamDeckHardware?.stop?.();

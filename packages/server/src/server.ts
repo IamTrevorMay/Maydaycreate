@@ -13,6 +13,7 @@ import { EventBus } from './events/bus.js';
 import { TimelineService } from './services/timeline.js';
 import { AIService } from './services/ai.js';
 import { MediaService } from './services/media.js';
+import { killAllTracked } from './services/tracked-exec.js';
 import { EffectsService } from './services/effects.js';
 import { HotkeyService } from './services/hotkeys.js';
 import { SupabaseSyncService } from './services/supabase-sync.js';
@@ -819,5 +820,5 @@ Be concise, friendly, and focused on actionable editing advice. Reference the sp
     }, 5 * 60_000);
   }
 
-  return { server, wss, lifecycle, loader, eventBus, supabaseSync, streamDeckConfig, streamDeckHardware, streamDeckWorkerManager, hotkeyService };
+  return { server, wss, lifecycle, loader, eventBus, supabaseSync, streamDeckConfig, streamDeckHardware, streamDeckWorkerManager, hotkeyService, killAllTracked };
 }

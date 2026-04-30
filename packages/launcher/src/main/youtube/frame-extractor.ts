@@ -1,8 +1,8 @@
-import { execFile } from 'child_process';
 import path from 'path';
 import fs from 'fs';
 import { randomUUID } from 'crypto';
 import type { ExtractedFrame } from '@mayday/types';
+import { trackedExecAsync } from './tracked-exec';
 
 const SCENE_THRESHOLD = 0.3;
 const GAP_FILL_INTERVAL_HIGH = 0.5;    // high scene density > 0.5 scenes/sec
@@ -19,18 +19,6 @@ function ffmpegPath(): string {
 
 function ffprobePath(): string {
   return 'ffprobe';
-}
-
-function execAsync(cmd: string, args: string[]): Promise<string> {
-  return new Promise((resolve, reject) => {
-    execFile(cmd, args, { maxBuffer: 50 * 1024 * 1024 }, (err, stdout, stderr) => {
-      if (err) {
-        reject(new Error(`${cmd} failed: ${err.message}\n${stderr}`));
-        return;
-      }
-      resolve(stdout + stderr);
-    });
-  });
 }
 
 interface SceneFrame {
@@ -90,23 +78,23 @@ export class FrameExtractor {
   }
 
   private async getVideoDuration(videoPath: string): Promise<number> {
-    const output = await execAsync(ffprobePath(), [
+    const output = await trackedExecAsync(ffprobePath(), [
       '-v', 'error',
       '-show_entries', 'format=duration',
       '-of', 'csv=p=0',
       videoPath,
-    ]);
+    ], { timeout: 15_000 });
     return parseFloat(output.trim()) || 0;
   }
 
   private async detectScenes(videoPath: string): Promise<SceneFrame[]> {
-    const output = await execAsync(ffmpegPath(), [
+    const output = await trackedExecAsync(ffmpegPath(), [
       '-i', videoPath,
       '-vf', `select='gt(scene,${SCENE_THRESHOLD})',showinfo`,
       '-vsync', 'vfr',
       '-f', 'null',
       '-',
-    ]);
+    ], { timeout: 300_000 });
 
     const scenes: SceneFrame[] = [];
     // Parse showinfo output for timestamps
@@ -194,13 +182,13 @@ export class FrameExtractor {
     outputPath: string,
     width: number,
   ): Promise<void> {
-    await execAsync(ffmpegPath(), [
+    await trackedExecAsync(ffmpegPath(), [
       '-ss', String(timestamp),
       '-i', videoPath,
       '-vframes', '1',
       '-vf', `scale=${width}:-1`,
       '-y',
       outputPath,
-    ]);
+    ], { timeout: 15_000 });
   }
 }

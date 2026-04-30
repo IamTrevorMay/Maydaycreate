@@ -1,8 +1,5 @@
-import { execFile } from 'child_process';
-import { promisify } from 'util';
 import type { MediaMetadata, MediaStream as MStream, SilentRegion } from '@mayday/types';
-
-const execFileAsync = promisify(execFile);
+import { trackedExecFile } from './tracked-exec.js';
 
 function parseFrameRate(str: string): number {
   if (!str) return 0;
@@ -17,13 +14,13 @@ function parseFrameRate(str: string): number {
 
 export class MediaService {
   async getMetadata(filePath: string): Promise<MediaMetadata> {
-    const { stdout } = await execFileAsync('ffprobe', [
+    const { stdout } = await trackedExecFile('ffprobe', [
       '-v', 'quiet',
       '-print_format', 'json',
       '-show_format',
       '-show_streams',
       filePath,
-    ]);
+    ], { timeout: 15_000 });
 
     const data = JSON.parse(stdout);
     const streams: MStream[] = (data.streams || []).map((s: Record<string, unknown>, i: number) => {
@@ -66,11 +63,11 @@ export class MediaService {
     const minDuration = options?.minDuration ?? 0.5;
 
     try {
-      const { stderr } = await execFileAsync('ffmpeg', [
+      const { stderr } = await trackedExecFile('ffmpeg', [
         '-i', filePath,
         '-af', `silencedetect=noise=${threshold}dB:d=${minDuration}`,
         '-f', 'null', '-',
-      ], { maxBuffer: 10 * 1024 * 1024 });
+      ], { timeout: 120_000, maxBuffer: 10 * 1024 * 1024 });
 
       const regions: SilentRegion[] = [];
       const lines = stderr.split('\n');
@@ -134,11 +131,11 @@ export class MediaService {
   async getAudioLevels(filePath: string, intervalSeconds = 0.5): Promise<Array<{ time: number; rms: number }>> {
     try {
       // Use ffmpeg's astats filter to compute RMS levels per segment
-      const { stderr } = await execFileAsync('ffmpeg', [
+      const { stderr } = await trackedExecFile('ffmpeg', [
         '-i', filePath,
         '-af', `asegment=segment_time=${intervalSeconds},astats=metadata=1:reset=1`,
         '-f', 'null', '-',
-      ], { maxBuffer: 50 * 1024 * 1024 });
+      ], { timeout: 120_000, maxBuffer: 50 * 1024 * 1024 });
 
       const levels: Array<{ time: number; rms: number }> = [];
       const lines = stderr.split('\n');
@@ -166,7 +163,7 @@ export class MediaService {
     const samples = options?.samples ?? 1000;
     const channel = options?.channel ?? 0;
 
-    const { stdout } = await execFileAsync('ffmpeg', [
+    const { stdout } = await trackedExecFile('ffmpeg', [
       '-i', filePath,
       '-filter_complex', `[0:a]channelsplit=channel_layout=mono[ch];[ch]aformat=sample_fmts=flt:channel_layouts=mono,compand=gain=-6[out]`,
       '-map', '[out]',
@@ -174,7 +171,7 @@ export class MediaService {
       '-f', 'f32le',
       '-frames:a', String(samples),
       '-',
-    ], { encoding: 'buffer' as BufferEncoding, maxBuffer: samples * 4 + 1024 } as Record<string, unknown>);
+    ], { timeout: 30_000, encoding: 'buffer' as BufferEncoding, maxBuffer: samples * 4 + 1024 } as Record<string, unknown>);
 
     const buffer = stdout as unknown as Buffer;
     const floats: number[] = [];

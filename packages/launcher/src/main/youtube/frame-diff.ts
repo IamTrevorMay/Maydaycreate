@@ -1,5 +1,5 @@
-import { execFile } from 'child_process';
 import type { ExtractedFrame } from '@mayday/types';
+import { trackedExecAsync } from './tracked-exec';
 
 const PRE_FILTER_THRESHOLD = 0.05;
 const LOW_LUMA_THRESHOLD = 16;
@@ -13,18 +13,6 @@ function isLowComplexityPair(lumaBefore: number, lumaAfter: number): boolean {
 
 function ffmpegPath(): string {
   return 'ffmpeg';
-}
-
-function execAsync(cmd: string, args: string[]): Promise<string> {
-  return new Promise((resolve, reject) => {
-    execFile(cmd, args, { maxBuffer: 50 * 1024 * 1024 }, (err, stdout, stderr) => {
-      if (err) {
-        reject(new Error(`${cmd} failed: ${err.message}\n${stderr}`));
-        return;
-      }
-      resolve(stdout + stderr);
-    });
-  });
 }
 
 export interface FramePairDiff {
@@ -88,12 +76,12 @@ interface SignalStats {
 
 async function getSignalStats(framePath: string): Promise<SignalStats> {
   try {
-    const output = await execAsync(ffmpegPath(), [
+    const output = await trackedExecAsync(ffmpegPath(), [
       '-i', framePath,
       '-vf', 'signalstats',
       '-f', 'null',
       '-',
-    ]);
+    ], { timeout: 15_000 });
 
     const yavg = parseFloat(output.match(/YAVG=([\d.]+)/)?.[1] || '128');
     const satavg = parseFloat(output.match(/SATAVG=([\d.]+)/)?.[1] || '0');
@@ -126,13 +114,13 @@ export class FrameDiffAnalyzer {
     let psnr = 100;
     let ssim = 1.0;
     try {
-      const output = await execAsync(ffmpegPath(), [
+      const output = await trackedExecAsync(ffmpegPath(), [
         '-i', beforePath,
         '-i', afterPath,
         '-lavfi', '[0:v][1:v]psnr;[0:v][1:v]ssim',
         '-f', 'null',
         '-',
-      ]);
+      ], { timeout: 30_000 });
       psnr = parsePsnr(output);
       ssim = parseSsim(output);
     } catch {
