@@ -31,6 +31,15 @@ Trevor May
 
 ## TODO
 - Add a `postinstall` script to package.json that auto-rebuilds better-sqlite3 for Electron after every `npm install`, so the ABI conflict is handled automatically.
+- **ffmpeg process leak / CPU lock-up** (reported 2026-04-30): ffmpeg children pin CPU and don't always exit cleanly.
+  - **Root causes**:
+    1. No timeouts on any `execFile('ffmpeg', ...)` calls (only `whisper.ts:68` whisper-cli itself has one). If ffmpeg hangs on a weird file/codec, it runs forever.
+    2. No process tracking — none of the call sites keep the `ChildProcess` handle, so nothing kills in-flight ffmpeg on launcher quit / job cancel. On macOS they can get orphaned to launchd.
+    3. `silencedetect` (Silence Remover, Cutting Board) decodes the entire audio stream — minutes of pegged CPU per large file is normal but if the parent loses the handle it just keeps grinding.
+    4. `frame-extractor.ts` spawns one ffmpeg per frame sequentially (`frame-extractor.ts:74-75`); a 30-min YouTube analysis = hundreds of back-to-back invocations. Mid-run cancel doesn't kill the in-flight one.
+  - **Affected files**: `packages/server/src/services/media.ts` (silencedetect, astats, waveform), `packages/server/src/services/whisper.ts:53` (WAV convert), `packages/launcher/src/main/youtube/frame-extractor.ts`, `packages/launcher/src/main/youtube/frame-diff.ts`.
+  - **Fix pattern**: Wrap each call site to (a) track the `ChildProcess` in a module-level `Set<ChildProcess>`, (b) add a configurable timeout (kill -SIGKILL on expiry), (c) remove from the set on exit. Add a `before-quit` hook in `packages/launcher/src/main/index.ts` that iterates all tracked children and kills them. Consider a small `spawnFfmpeg()` helper in a shared module so all five call sites use the same logic.
+  - **Quick mitigation if it happens**: `pkill -9 ffmpeg`.
 
 ## Progress (2026-03-30)
 1. **Mayday Shortcuts**: ✅ Working. Hotkey-based execution via SpellBook + CGEvents. User assigns hotkeys in Excalibur Settings, Mayday simulates them.
