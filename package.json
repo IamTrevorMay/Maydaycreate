@@ -1,6 +1,6 @@
 {
   "name": "mayday-create",
-  "version": "1.0.2",
+  "version": "2.0.0",
   "private": true,
   "description": "Plugin development platform for Adobe Premiere Pro 2026",
   "workspaces": [
@@ -8,6 +8,7 @@
     "plugins/*"
   ],
   "scripts": {
+    "postinstall": "node scripts/rebuild-sqlite3.js",
     "dev": "npm run -w @mayday/server dev",
     "dev:launcher": "npm run -w @mayday/launcher dev",
     "build": "npm run build:types && npm run build:sdk && npm run build:server && npm run build:cli && npm run build:cep && npm run build:sync-engine",

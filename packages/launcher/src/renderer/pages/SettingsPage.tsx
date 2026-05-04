@@ -237,20 +237,22 @@ export function SettingsPage(): React.ReactElement {
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
             <span style={{ fontSize: 12, color: c.text.primary }}>Current version: {appVersion}</span>
             <div style={{ display: 'flex', gap: 6 }}>
-              <button
-                onClick={() => setShowPushWizard(true)}
-                style={{
-                  padding: '3px 10px',
-                  borderRadius: 4,
-                  border: '1px solid #444',
-                  fontSize: 11,
-                  cursor: 'pointer',
-                  background: 'transparent',
-                  color: '#999',
-                }}
-              >
-                Push &amp; Publish
-              </button>
+              {import.meta.env.DEV && (
+                <button
+                  onClick={() => setShowPushWizard(true)}
+                  style={{
+                    padding: '3px 10px',
+                    borderRadius: 4,
+                    border: '1px solid #444',
+                    fontSize: 11,
+                    cursor: 'pointer',
+                    background: 'transparent',
+                    color: '#999',
+                  }}
+                >
+                  Push &amp; Publish
+                </button>
+              )}
               <button
                 onClick={checkForUpdates}
                 disabled={updateStatus === 'checking'}
@@ -558,10 +560,12 @@ export function SettingsPage(): React.ReactElement {
         </div>
       </Section>
 
-      {/* Source Repository */}
-      <Section title="Source Repository">
-        <Row label="Path" value={config.sourceRepoPath || 'Not configured'} mono />
-      </Section>
+      {/* Source Repository (dev only) */}
+      {import.meta.env.DEV && (
+        <Section title="Source Repository">
+          <Row label="Path" value={config.sourceRepoPath || 'Not configured'} mono />
+        </Section>
+      )}
 
       {/* About */}
       <Section title="About">
@@ -586,7 +590,7 @@ export function SettingsPage(): React.ReactElement {
         />
       )}
 
-      {showPushWizard && (
+      {import.meta.env.DEV && showPushWizard && (
         <PushWizard
           onDone={() => setShowPushWizard(false)}
           onCancel={() => setShowPushWizard(false)}
