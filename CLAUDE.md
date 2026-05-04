@@ -8,8 +8,7 @@ Trevor May
 
 ## Versioning
 - **GitHub Releases are the source of truth for version numbers**, not package.json.
-- As of 2026-03-28, the latest release is v1.0.2.
-- Version was previously out of sync (package.json said 1.0.14 while latest GH release was 1.0.2) due to a version reset.
+- As of 2026-05-04, the latest release is **v2.0.0** — first production .dmg release, signed and notarized.
 - When checking or bumping versions, always verify against `gh release list` first.
 - Keep version in sync across: package.json, package-lock.json, packages/launcher/package.json, packages/cep-panel/package.json.
 
@@ -17,8 +16,7 @@ Trevor May
 - **Run `npm run dev:launcher`** to start the Electron app (it embeds the server via server-bridge.js).
 - The standalone `npm run dev` (server only) is separate and optional — the launcher doesn't need it.
 - Server runs on port 9876, Electron renderer on 5173/5174.
-- **better-sqlite3 ABI conflict**: System Node (ABI 137) and Electron 31 (ABI 125) need different native builds. They share one binary in node_modules. After `npm install`, the binary is built for system Node, which breaks Electron.
-- Fix: `cd node_modules/better-sqlite3 && npx prebuild-install -r electron -t 31.7.7`
+- **better-sqlite3 ABI conflict**: System Node (ABI 137) and Electron 31 (ABI 125) need different native builds. Handled automatically by `scripts/rebuild-sqlite3.js` postinstall script. Manual fix if needed: `cd node_modules/better-sqlite3 && npx prebuild-install -r electron -t 31.7.7`
 - The launcher has a **single instance lock** (`app.requestSingleInstanceLock()` in `packages/launcher/src/main/index.ts:100-104`). Stale Electron processes will cause new launches to silently quit. Always kill old Electron processes before relaunching.
 - After building/installing, also rebuild and install the CEP panel: `npm run build:cep` then `sudo bash scripts/install-cep.sh`.
 
@@ -30,8 +28,9 @@ Trevor May
 - CEP panel install is a symlink: `npm run build:cep` updates files in place, no reinstall needed after first `sudo bash scripts/install-cep.sh`.
 
 ## TODO
-- Add a `postinstall` script to package.json that auto-rebuilds better-sqlite3 for Electron after every `npm install`, so the ABI conflict is handled automatically.
+- ~~Add a `postinstall` script to package.json that auto-rebuilds better-sqlite3 for Electron~~ — ✅ Done in `e57d390`. `scripts/rebuild-sqlite3.js` runs after every `npm install`, skips when `ELECTRON_BUILDER=true`.
 - ~~**ffmpeg process leak / CPU lock-up**~~ — ✅ Fixed in `9a01daa`. All 12 ffmpeg/ffprobe/whisper call sites now use `trackedExecFile()`/`trackedExecAsync()` with per-call timeouts (5s–300s) and `killAllTracked()` on shutdown. Utilities: `packages/server/src/services/tracked-exec.ts`, `packages/launcher/src/main/youtube/tracked-exec.ts`.
+- Update GitHub Actions workflow to Node.js 24 before June 2nd, 2026 (deprecation warning on v2.0.0 build).
 
 ## Progress (2026-03-30)
 1. **Mayday Shortcuts**: ✅ Working. Hotkey-based execution via SpellBook + CGEvents. User assigns hotkeys in Excalibur Settings, Mayday simulates them.
@@ -45,8 +44,8 @@ Trevor May
    - ✅ Deleted 37 empty (0-edit) sessions from local DB.
    - 🔧 **ACTIVE BUG — Workout Queue shows 0 data**: The `getTrainingDataSummary` IPC handler queries Supabase `cut_records` with `gt('detected_at', lastTrainedAt)` but either the column type mismatch (epoch ms vs timestamptz) or the query is failing silently. Needs debugging — add error logging, verify Supabase column types for `detected_at` and `trained_at`.
    - 🔧 **ACTIVE BUG — Personal Records not updating after train**: May be fixed (cloud push is now awaited) but untested since the Workout Queue bug blocks training (shows 0 data).
-3. **Release-ready packaging**: Not started. Download on a new machine → all dependencies install perfectly without needing Claude Code.
-4. **PathGuard**: In progress on `feature/pathguard` branch. Build Step 1 (scaffolding) complete — plugin loads and builds. Next: Build Step 2 (ExtendScript scanner testing in Premiere).
+3. **Release-ready packaging**: ✅ Complete. v2.0.0 published 2026-05-04. Signed, notarized .dmg + .zip on GitHub Releases. Auto-updater (electron-updater) checks GitHub Releases on launch. CI pipeline: push `v*` tag → GitHub Actions builds, signs, notarizes, publishes. Dev-only UI (Push & Publish button, Source Repository section) gated behind `import.meta.env.DEV`.
+4. **PathGuard**: Paused. Build Step 1 (scaffolding) complete — plugin loads and builds. Next: Build Step 2 (ExtendScript scanner testing in Premiere). Code merged to `main` as of v2.0.0.
 
 ## Training System Design (IMPORTANT — do not deviate)
 - **Supabase is the single source of truth** for training data. All machines push cut_records to Supabase. Training pulls ALL records from cloud (all machines) and retrains from scratch.
@@ -57,7 +56,7 @@ Trevor May
 - Sessions end when: stop-capture called, CEP panel disconnects, launcher closes, or Premiere closes.
 - Orphaned sessions (crashed without clean shutdown) are closed on plugin activation.
 
-## PathGuard Plugin (branch: `feature/pathguard`)
+## PathGuard Plugin (merged to `main` in v2.0.0)
 
 **Goal**: CEP plugin that prevents broken media links by introducing a symlink indirection layer. When media is imported, PathGuard creates a managed symlink and relinks Premiere to it. A background daemon watches for file moves/renames and updates symlink targets. Premiere only ever sees the stable symlink path.
 
@@ -230,6 +229,21 @@ All 7 plugin manifests updated with `repository`, `minSdkVersion`, `hasCep` fiel
 - These depend on plugins having their own embedded UI (Phase 6+)
 
 ### Phase 6: Cutting Board IPC migration — 🔲 NOT STARTED (last step)
+
+## Release & Packaging
+- **Current version**: v2.0.0 (2026-05-04)
+- **CI/CD**: Push a `v*` tag → `.github/workflows/release.yml` builds, signs (Developer ID), notarizes (xcrun notarytool), and publishes to GitHub Releases.
+- **Artifacts**: `Mayday Create-{version}-arm64.dmg`, `Mayday Create-{version}-arm64-mac.zip`, `latest-mac.yml` (for auto-updater), blockmaps (for delta updates).
+- **Auto-update**: electron-updater checks GitHub Releases on launch (if `config.autoUpdate` is true). Downloads in background, installs on quit.
+- **To release a new version**:
+  1. Bump version in package.json, packages/launcher/package.json, packages/cep-panel/package.json
+  2. Run `npm install --package-lock-only` to sync lockfile
+  3. Commit, tag (`git tag v{x.y.z}`), push tag
+  4. CI handles the rest
+- **Local build** (unsigned): `npm run build && cd packages/launcher && npm run package` → output in `packages/launcher/release/`
+- **GitHub Secrets needed**: `MACOS_CERTIFICATE` (base64 p12), `MACOS_CERTIFICATE_PWD`, `APPLE_ID`, `APPLE_APP_SPECIFIC_PASSWORD`
+- **Apple Developer team ID**: `XF99392HXQ`
+- **Architecture**: arm64 only (Apple Silicon). No x64/universal build.
 
 ## Build Steps (must do after code changes)
 - Server changes: `npm run build:server` then restart launcher
