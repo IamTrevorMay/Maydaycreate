@@ -137,6 +137,35 @@ Trevor May
 
 **Non-goals for v1**: multi-speaker/diarization, Windows support, music/b-roll-aware logic, source-clip workflow, full custom waveform UI.
 
+### Evil Twin — Paused 2026-05-09 (mid-Step 4 validation)
+
+**Where we are**:
+- ✅ Step 1 scaffold complete (commit `0244946` on `IamTrevorMay/mayday-cutting-board-evil-twin`)
+- ✅ Three SDK primitives added to MaydayCreate (commit `84c2b33`):
+  - `ctx.invokePlugin(pluginId, commandId, args)`
+  - `MediaServiceAPI.transcribe(filePath, opts)` (whisper.cpp `--output-json`)
+  - `TimelineServiceAPI.rippleDeleteRange(startSec, endSec)`
+- ✅ Validation harness: 3 test buttons in Evil Twin's CEP panel (commit `6ed2137` + `b…` panel commit)
+- ✅ **Step 2 gate PASSED**: cross-plugin invocation works end-to-end. silence-pass returned 188 silent regions through `ctx.invokePlugin`.
+- 🔧 **Step 4 gate IN PROGRESS**: range delete works mechanically, but validation result was ambiguous — `liftedCount=0, movedCount=20`. Either the test sequence had no content at [5,10] OR razor's frame-quantization put cuts outside our 1ms tolerance. EPS_TICKS now bumped to 12.7e9 (~50ms, comfortably covers any frame rate ≥ 20fps).
+- ⏸️ Step 3 (transcribe): not yet validated. Requires `whisper-cli` on PATH + `ggml-base.en.bin` model.
+
+**Critical Premiere 2026 finding**: `app.executeCommand` was REMOVED. The first rippleDeleteRange impl used `app.executeCommand(41089)` for Extract — that's gone. Reimplemented as: razor at boundaries via QE (`qe.project.getActiveSequence(0).razor(ticks)`), per-track lift clips fully in range (`clip.remove(false, true)`), per-track move clips after the range back via `clip.move(deltaTime)` with negative ticks. Avoids menu commands entirely.
+
+**Side-loaded for dev launcher** (NOT installed via Plugin Manager):
+- Server plugin: `~/Library/Application Support/@mayday/launcher/plugins/cutting-board-evil-twin/`
+- CEP extension: `~/Library/Application Support/Adobe/CEP/extensions/com.mayday.cutting-board-evil-twin.v1.0.0/`
+- Main `com.mayday.create` symlink was broken (pointed to old `~/Desktop/MaydayCreate/dist/cep`). Fixed to point to `~/Desktop/Mayday Software Development/MaydayCreate/dist/cep` — required for the Premiere ↔ server bridge.
+
+**Resume here**:
+1. Quit Premiere, restart dev launcher (`npm run dev:launcher`), reopen both the **Mayday Create** main panel and **Cutting Board Evil Twin** panel in Premiere.
+2. Open a sequence with KNOWN content between 5s and 10s on multiple tracks (V1 speech + V2 b-roll + A1 speech + A2 music ideal). Click the Timeline panel to focus it.
+3. Run Test 3 (start=5, end=10) again with the wider EPS. If `liftedCount > 0` and the duplicate sequence's later clips lined up correctly, Step 4 gate is **passed**.
+4. If still wrong: the per-track lift+move algorithm needs replacement — fall back to using `qe.project.getActiveSequence(0)` methods directly or rebuild with `seq.removeClips()` if it exists in Premiere 2026.
+5. Once Step 4 passes, move to Step 5 (heuristic take detector).
+
+**Outstanding decision before Step 5**: Step 3 (transcribe) is untested. User does not have `whisper-cli` confirmed installed. Either install whisper.cpp + base.en model first, or punt Step 3 validation until take detection actually needs it.
+
 ## Bug Fix Audit (2026-04-24)
 
 Full codebase security and reliability audit completed. **33 bugs fixed** in commit `ba058e0` on `feature/pathguard`, across 31 files. Both `build:server` and `build:cep` pass clean.

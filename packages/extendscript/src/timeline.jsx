@@ -332,30 +332,125 @@ var MaydayTimeline = (function () {
     }
 
     function rippleDeleteRange(startSec, endSec) {
-        // Ripple-delete a time range across all unlocked tracks via Premiere's Extract command.
-        // Sets the sequence in/out points to [startSec, endSec], then runs Extract (41089),
-        // which removes the range and shifts everything after it back by (endSec - startSec).
-        // Sync across video and audio tracks is preserved by Premiere's native ripple behavior.
+        // Range ripple delete — Premiere 2026 removed app.executeCommand, so we can't trigger
+        // the Extract menu command. Implementation:
+        //   1. Razor every track at startSec and endSec via QE (so each clip overlapping the
+        //      boundaries gets cleanly split at the boundary).
+        //   2. Per track, lift (non-ripple delete) every clip fully inside the range.
+        //   3. Per track, move every clip that starts after the range back by (end - start)
+        //      seconds, using TrackItem.move(time).
+        //
+        // Returns a diagnostic object — { ok: bool, stage?: string, ... } — so failures can be
+        // pinpointed instead of being collapsed to null.
         var seq = app.project.activeSequence;
-        if (!seq) return null;
-        if (typeof startSec !== "number" || typeof endSec !== "number" || endSec <= startSec) return null;
+        if (!seq) {
+            return { ok: false, stage: "no-active-sequence" };
+        }
+        if (typeof startSec !== "number" || typeof endSec !== "number" || endSec <= startSec) {
+            return {
+                ok: false, stage: "invalid-args",
+                startSec: startSec, endSec: endSec,
+                types: typeof startSec + "," + typeof endSec
+            };
+        }
 
         var startTicks = MaydayUtils.secondsToTicks(startSec);
         var endTicks = MaydayUtils.secondsToTicks(endSec);
+        var rangeTicks = endTicks - startTicks;
 
-        seq.setInPoint(startTicks);
-        seq.setOutPoint(endTicks);
+        // STEP 1: Razor all tracks at both boundaries via QE
+        try {
+            if (typeof app.enableQE === "function") {
+                try { app.enableQE(); } catch (e2) {}
+            }
+            var qeSeq = qe.project.getActiveSequence(0);
+            if (!qeSeq) {
+                return { ok: false, stage: "qe-no-active-sequence" };
+            }
+            qeSeq.razor(startTicks.toString());
+            qeSeq.razor(endTicks.toString());
+        } catch (e) {
+            return {
+                ok: false, stage: "razor-failed",
+                error: e && e.message ? e.message : String(e),
+                startTicks: startTicks.toString(), endTicks: endTicks.toString()
+            };
+        }
+
+        // Frame-width tolerance for tick comparisons. One frame at 24fps = 41.67ms ≈ 10.6e9 ticks.
+        // We use 50ms (~12.7e9 ticks) to comfortably cover any frame rate down to 20fps.
+        // Without this, razor's frame-snapped cut at e.g. 10.033s would put the middle clip's end
+        // at 10.033s, failing a tighter (ce <= endTicks) check and leaving the middle un-lifted.
+        var EPS_TICKS = 12700800000;
+        var liftedCount = 0;
+        var movedCount = 0;
+        var perTrackErrors = [];
+
+        function processTracks(tracks, trackTypeLabel) {
+            for (var i = 0; i < tracks.numTracks; i++) {
+                var track = tracks[i];
+
+                // Pass 1: snapshot clip refs, then lift fully-in-range clips.
+                // Snapshot first because lift removes items and invalidates indexes mid-iteration.
+                var inRangeClips = [];
+                for (var j = 0; j < track.clips.numItems; j++) {
+                    var clip = track.clips[j];
+                    var cs = Number(clip.start.ticks);
+                    var ce = Number(clip.end.ticks);
+                    if (cs >= startTicks - EPS_TICKS && ce <= endTicks + EPS_TICKS) {
+                        inRangeClips.push(clip);
+                    }
+                }
+                for (var k = 0; k < inRangeClips.length; k++) {
+                    try {
+                        inRangeClips[k].remove(false, true); // (inRipple=false, alignToVideo=true) → lift
+                        liftedCount++;
+                    } catch (e) {
+                        perTrackErrors.push(trackTypeLabel + i + ":lift:" + (e && e.message ? e.message : e));
+                    }
+                }
+
+                // Pass 2: re-walk clips, move every clip that starts at/after the range back by rangeTicks
+                var afterClips = [];
+                for (var m = 0; m < track.clips.numItems; m++) {
+                    var c2 = track.clips[m];
+                    if (Number(c2.start.ticks) >= endTicks - EPS_TICKS) {
+                        afterClips.push(c2);
+                    }
+                }
+                for (var n = 0; n < afterClips.length; n++) {
+                    try {
+                        var delta = new Time();
+                        delta.ticks = (-rangeTicks).toString();
+                        afterClips[n].move(delta);
+                        movedCount++;
+                    } catch (e) {
+                        perTrackErrors.push(trackTypeLabel + i + ":move:" + (e && e.message ? e.message : e));
+                    }
+                }
+            }
+        }
 
         try {
-            app.executeCommand(41089); // Extract
+            processTracks(seq.videoTracks, "V");
+            processTracks(seq.audioTracks, "A");
         } catch (e) {
-            return null;
+            return {
+                ok: false, stage: "process-tracks-failed",
+                error: e && e.message ? e.message : String(e),
+                liftedCount: liftedCount, movedCount: movedCount,
+                perTrackErrors: perTrackErrors
+            };
         }
 
         return {
+            ok: true,
             rangeStart: startSec,
             rangeEnd: endSec,
-            durationRemoved: endSec - startSec
+            durationRemoved: endSec - startSec,
+            liftedCount: liftedCount,
+            movedCount: movedCount,
+            perTrackErrors: perTrackErrors
         };
     }
 

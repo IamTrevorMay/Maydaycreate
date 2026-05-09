@@ -137,7 +137,7 @@ export interface TimelineServiceAPI {
    * Caveat: requires the Timeline panel to have focus. The plugin should ensure the
    * timeline is focused (or warn the user) before calling.
    */
-  rippleDeleteRange(startSeconds: number, endSeconds: number): Promise<{ rangeStart: number; rangeEnd: number; durationRemoved: number } | null>;
+  rippleDeleteRange(startSeconds: number, endSeconds: number): Promise<RippleDeleteRangeDiagnostic>;
   liftClip(trackIndex: number, clipIndex: number, trackType: 'video' | 'audio'): Promise<boolean>;
   setClipEnabled(trackIndex: number, clipIndex: number, trackType: 'video' | 'audio', enabled: boolean): Promise<boolean>;
   getProjectBinItems(): Promise<import('./timeline').ProjectBinItem[]>;
@@ -201,6 +201,20 @@ export interface TranscriptionResult {
   language: string;
   fullText: string;
 }
+
+/**
+ * Result of timeline.rippleDeleteRange — discriminated by `ok`.
+ * On failure, `stage` identifies where the operation broke (no-active-sequence,
+ * invalid-args, set-inout-failed, or extract-command-failed) so callers can
+ * surface specific diagnostics.
+ */
+export type RippleDeleteRangeDiagnostic =
+  | { ok: true; rangeStart: number; rangeEnd: number; durationRemoved: number; liftedCount: number; movedCount: number; perTrackErrors: string[] }
+  | { ok: false; stage: 'no-active-sequence' }
+  | { ok: false; stage: 'qe-no-active-sequence' }
+  | { ok: false; stage: 'invalid-args'; startSec: unknown; endSec: unknown; types: string }
+  | { ok: false; stage: 'razor-failed'; error: string; startTicks: string; endTicks: string }
+  | { ok: false; stage: 'process-tracks-failed'; error: string; liftedCount: number; movedCount: number; perTrackErrors: string[] };
 
 export interface PluginLogger {
   info(message: string, ...args: unknown[]): void;

@@ -19,6 +19,7 @@ export type {
   TranscriptionOptions,
   TranscriptionResult,
   TranscriptSegment,
+  RippleDeleteRangeDiagnostic,
   Sequence,
   Clip,
   Marker,

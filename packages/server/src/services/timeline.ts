@@ -1,4 +1,4 @@
-import type { Sequence, Clip, Marker, ProjectBinItem } from '@mayday/types';
+import type { Sequence, Clip, Marker, ProjectBinItem, RippleDeleteRangeDiagnostic } from '@mayday/types';
 import { BridgeHandler } from '../bridge/handler.js';
 
 export class TimelineService {
@@ -52,8 +52,8 @@ export class TimelineService {
     return await this.bridge.callExtendScript('timeline.rippleDelete', [trackIndex, clipIndex, trackType]) as boolean;
   }
 
-  async rippleDeleteRange(startSeconds: number, endSeconds: number): Promise<{ rangeStart: number; rangeEnd: number; durationRemoved: number } | null> {
-    return await this.bridge.callExtendScript('timeline.rippleDeleteRange', [startSeconds, endSeconds]) as { rangeStart: number; rangeEnd: number; durationRemoved: number } | null;
+  async rippleDeleteRange(startSeconds: number, endSeconds: number): Promise<RippleDeleteRangeDiagnostic> {
+    return await this.bridge.callExtendScript('timeline.rippleDeleteRange', [startSeconds, endSeconds]) as RippleDeleteRangeDiagnostic;
   }
 
   async liftClip(trackIndex: number, clipIndex: number, trackType: 'video' | 'audio'): Promise<boolean> {
