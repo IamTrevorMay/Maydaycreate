@@ -13,6 +13,7 @@ import { EventBus } from './events/bus.js';
 import { TimelineService } from './services/timeline.js';
 import { AIService } from './services/ai.js';
 import { MediaService } from './services/media.js';
+import { WhisperService } from './services/whisper.js';
 import { killAllTracked } from './services/tracked-exec.js';
 import { EffectsService } from './services/effects.js';
 import { HotkeyService } from './services/hotkeys.js';
@@ -70,7 +71,8 @@ export async function startServer(config: ServerConfig) {
   // Plugin services
   const timelineService = new TimelineService(bridge);
   const aiService = new AIService();
-  const mediaService = new MediaService();
+  const whisperService = new WhisperService(config.dataDir);
+  const mediaService = new MediaService(whisperService);
   const effectsService = new EffectsService(bridge);
 
   // Global hotkeys for boost (works even when Premiere has focus)

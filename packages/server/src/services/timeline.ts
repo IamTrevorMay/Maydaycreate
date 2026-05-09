@@ -52,6 +52,10 @@ export class TimelineService {
     return await this.bridge.callExtendScript('timeline.rippleDelete', [trackIndex, clipIndex, trackType]) as boolean;
   }
 
+  async rippleDeleteRange(startSeconds: number, endSeconds: number): Promise<{ rangeStart: number; rangeEnd: number; durationRemoved: number } | null> {
+    return await this.bridge.callExtendScript('timeline.rippleDeleteRange', [startSeconds, endSeconds]) as { rangeStart: number; rangeEnd: number; durationRemoved: number } | null;
+  }
+
   async liftClip(trackIndex: number, clipIndex: number, trackType: 'video' | 'audio'): Promise<boolean> {
     return await this.bridge.callExtendScript('timeline.liftClip', [trackIndex, clipIndex, trackType]) as boolean;
   }

@@ -1,5 +1,6 @@
-import type { MediaMetadata, MediaStream as MStream, SilentRegion } from '@mayday/types';
+import type { MediaMetadata, MediaStream as MStream, SilentRegion, TranscriptionOptions, TranscriptionResult } from '@mayday/types';
 import { trackedExecFile } from './tracked-exec.js';
+import type { WhisperService } from './whisper.js';
 
 function parseFrameRate(str: string): number {
   if (!str) return 0;
@@ -13,6 +14,15 @@ function parseFrameRate(str: string): number {
 }
 
 export class MediaService {
+  constructor(private whisper?: WhisperService) {}
+
+  async transcribe(filePath: string, options?: TranscriptionOptions): Promise<TranscriptionResult> {
+    if (!this.whisper) {
+      throw new Error('Transcription unavailable — WhisperService not configured on this server.');
+    }
+    return this.whisper.transcribeFile(filePath, options?.language ?? 'en');
+  }
+
   async getMetadata(filePath: string): Promise<MediaMetadata> {
     const { stdout } = await trackedExecFile('ffprobe', [
       '-v', 'quiet',

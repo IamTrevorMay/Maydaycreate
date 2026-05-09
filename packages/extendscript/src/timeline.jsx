@@ -331,6 +331,34 @@ var MaydayTimeline = (function () {
         }
     }
 
+    function rippleDeleteRange(startSec, endSec) {
+        // Ripple-delete a time range across all unlocked tracks via Premiere's Extract command.
+        // Sets the sequence in/out points to [startSec, endSec], then runs Extract (41089),
+        // which removes the range and shifts everything after it back by (endSec - startSec).
+        // Sync across video and audio tracks is preserved by Premiere's native ripple behavior.
+        var seq = app.project.activeSequence;
+        if (!seq) return null;
+        if (typeof startSec !== "number" || typeof endSec !== "number" || endSec <= startSec) return null;
+
+        var startTicks = MaydayUtils.secondsToTicks(startSec);
+        var endTicks = MaydayUtils.secondsToTicks(endSec);
+
+        seq.setInPoint(startTicks);
+        seq.setOutPoint(endTicks);
+
+        try {
+            app.executeCommand(41089); // Extract
+        } catch (e) {
+            return null;
+        }
+
+        return {
+            rangeStart: startSec,
+            rangeEnd: endSec,
+            durationRemoved: endSec - startSec
+        };
+    }
+
     return {
         getActiveSequence: getActiveSequence,
         getClips: getClips,
@@ -342,6 +370,7 @@ var MaydayTimeline = (function () {
         insertClip: insertClip,
         overwriteClip: overwriteClip,
         rippleDelete: rippleDelete,
+        rippleDeleteRange: rippleDeleteRange,
         liftClip: liftClip,
         setClipEnabled: setClipEnabled,
         getProjectBinItems: getProjectBinItems,

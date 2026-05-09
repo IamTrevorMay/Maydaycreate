@@ -311,6 +311,10 @@ export class PluginLifecycle {
       return sub;
     };
 
+    const invokePlugin = (pluginId: string, commandId: string, args?: Record<string, unknown>) => {
+      return this.executeCommand(pluginId, commandId, args);
+    };
+
     return {
       pluginId: manifest.id,
       services: this.createPermissionGatedServices(manifest, log),
@@ -320,6 +324,7 @@ export class PluginLifecycle {
       ui,
       dataDir: pluginDataDir,
       onEvent,
+      invokePlugin,
     };
   }
 }

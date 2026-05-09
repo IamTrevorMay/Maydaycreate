@@ -100,6 +100,12 @@ export interface PluginContext {
   ui: PluginUI;
   dataDir: string;
   onEvent(eventType: string, handler: (data: unknown) => void): { unsubscribe(): void };
+  /**
+   * Invoke a command on another loaded+activated plugin.
+   * Throws if the target plugin or command isn't available.
+   * Used for hard plugin-to-plugin dependencies (e.g. cutting-board-evil-twin → silence-remover).
+   */
+  invokePlugin(pluginId: string, commandId: string, args?: Record<string, unknown>): Promise<unknown>;
 }
 
 export interface PluginServices {
@@ -122,6 +128,16 @@ export interface TimelineServiceAPI {
   insertClip(trackIndex: number, trackType: 'video' | 'audio', projectItemPath: string, timeInSeconds: number): Promise<boolean>;
   overwriteClip(trackIndex: number, trackType: 'video' | 'audio', projectItemPath: string, timeInSeconds: number): Promise<boolean>;
   rippleDelete(trackIndex: number, clipIndex: number, trackType: 'video' | 'audio'): Promise<boolean>;
+  /**
+   * Ripple-delete the time range [startSeconds, endSeconds] across all unlocked tracks
+   * on the active sequence. Implemented via Premiere's Extract command — sets the sequence
+   * in/out points to the range and runs Edit > Extract. All tracks shift back by the
+   * range duration; sync is preserved.
+   *
+   * Caveat: requires the Timeline panel to have focus. The plugin should ensure the
+   * timeline is focused (or warn the user) before calling.
+   */
+  rippleDeleteRange(startSeconds: number, endSeconds: number): Promise<{ rangeStart: number; rangeEnd: number; durationRemoved: number } | null>;
   liftClip(trackIndex: number, clipIndex: number, trackType: 'video' | 'audio'): Promise<boolean>;
   setClipEnabled(trackIndex: number, clipIndex: number, trackType: 'video' | 'audio', enabled: boolean): Promise<boolean>;
   getProjectBinItems(): Promise<import('./timeline').ProjectBinItem[]>;
@@ -152,6 +168,12 @@ export interface MediaServiceAPI {
   detectSilence(filePath: string, options?: SilenceDetectionOptions): Promise<import('./media').SilentRegion[]>;
   getWaveform(filePath: string, options?: WaveformOptions): Promise<number[]>;
   getAudioLevels(filePath: string, intervalSeconds?: number): Promise<Array<{ time: number; rms: number }>>;
+  /**
+   * Transcribe an audio/video file into time-aligned segments.
+   * Uses local whisper.cpp (requires whisper-cli on PATH and a base.en model in
+   * `<dataDir>/models/ggml-base.en.bin`). Throws if whisper isn't available.
+   */
+  transcribe(filePath: string, options?: TranscriptionOptions): Promise<TranscriptionResult>;
 }
 
 export interface SilenceDetectionOptions {
@@ -162,6 +184,22 @@ export interface SilenceDetectionOptions {
 export interface WaveformOptions {
   samples?: number;
   channel?: number;
+}
+
+export interface TranscriptionOptions {
+  language?: string; // ISO code, default 'en'
+}
+
+export interface TranscriptSegment {
+  start: number; // seconds
+  end: number;   // seconds
+  text: string;
+}
+
+export interface TranscriptionResult {
+  segments: TranscriptSegment[];
+  language: string;
+  fullText: string;
 }
 
 export interface PluginLogger {

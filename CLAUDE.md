@@ -101,6 +101,42 @@ Trevor May
 - **Known**: Scanner `MaydayPathGuard.scanProject()` is written but untested in Premiere. Server command `scan-project` is still a stub.
 - **Parking note — main branch stash**: `stash@{0}` on main holds Excalibur preset keyframe remap + value resolution WIP from 2026-03-28 (`effects.jsx`, `excalibur-executor.ts`). Unrelated to PathGuard; pop when returning to Excalibur work.
 
+## Cutting Board Evil Twin Plugin (repo: `IamTrevorMay/mayday-cutting-board-evil-twin`)
+
+**Goal**: An alternate take on Cutting Board with an arrangement-style workflow. Three sequential steps applied to an in/out range on the active sequence:
+1. **Silence pass** — call into existing Silence Remover plugin (hard dep) to remove low-hanging silence.
+2. **Take detection** — transcribe → identify multiple takes → highlight all but the last for cut. Hybrid: repeated-phrase heuristic + LLM tiebreak (Claude API, user-supplied key) on ambiguous clusters only.
+3. **Refine** — normalize ALL cut boundaries to a single standard (pre-roll ms, audio ramp threshold). Trims/extends as needed.
+
+**Design decisions** (locked 2026-05-09):
+- New extracted repo from day one, scaffolded from `templates/plugin-repo/`.
+- Hard dep on `silence-remover` plugin (`dependencies: ["silence-remover"]`).
+- Transcript source: Premiere built-in OR Whisper, picked per-session (default Whisper if Premiere transcript not detected).
+- Step order: transcribe original → silence → take detection → refine. Single transcription pass on the source range up front.
+- Work unit: in/out range on active sequence.
+- Track behavior: ripple delete across all tracks (default Premiere ripple).
+- Safety: every Run **duplicates the active sequence** as `<original> (Evil Twin)` and operates on the copy. Original untouched.
+- UI: single Run button + config panel (checkboxes per step, "require approval" toggle).
+- Approval default: **require user approval** out of the box for take cuts. Strikethrough transcript review in CEP panel.
+- LLM auth: user pastes own Anthropic key into plugin settings.
+- Speaker scope: **solo speaker only for v1**. Multi-speaker/diarization is v2.
+
+**Build order** (each step validates before next; two CRITICAL gates):
+1. 🔲 **Scaffold repo** — `mayday-cutting-board-evil-twin` from template, manifest, CEP panel stub, builds clean.
+2. 🔲 **Silence Remover IPC bridge (CRITICAL)** — invoke a Silence Remover command from Evil Twin, receive structured cut points. If cross-plugin command flow doesn't return structured data cleanly, redesign here.
+3. 🔲 **Transcript adapter** — normalized `{segments: [{start, end, text}]}`. Backends: Whisper (reuse `packages/server/src/services/whisper.ts`) and Premiere built-in. **CRITICAL spike**: confirm ExtendScript can read Premiere Speech-to-Text — if not, ship Whisper-only.
+4. 🔲 **Sequence duplication + ripple delete (CRITICAL)** — ExtendScript: duplicate active sequence, walk in/out range, ripple-delete at given timecodes across all tracks. If frame drift / sync corruption shows up here on a real multi-track sequence, the whole approach fails.
+5. 🔲 **Heuristic take detector** — repeated-phrase matcher, no LLM yet. Output: cut candidates with confidence + transcript spans.
+6. 🔲 **In-panel strikethrough UI** — render segments, click to toggle keep/cut, Apply button.
+7. 🔲 **LLM tiebreak** — settings page for API key, Claude API call for sub-threshold candidates only.
+8. 🔲 **Step 3 refine pass** — walk all cut boundaries on the duplicated sequence, snap to standard pre-roll/post-roll.
+9. 🔲 **Run button + config panel** — wire everything end-to-end.
+10. 🔲 **Error handling + observability** — missing API key, no in/out range, Silence Remover not installed, transcript failures.
+
+**Non-negotiable gates**: Step 2 (cross-plugin command flow) and Step 4 (ExtendScript ripple-delete fidelity). Pivot before continuing if either fails.
+
+**Non-goals for v1**: multi-speaker/diarization, Windows support, music/b-roll-aware logic, source-clip workflow, full custom waveform UI.
+
 ## Bug Fix Audit (2026-04-24)
 
 Full codebase security and reliability audit completed. **33 bugs fixed** in commit `ba058e0` on `feature/pathguard`, across 31 files. Both `build:server` and `build:cep` pass clean.
