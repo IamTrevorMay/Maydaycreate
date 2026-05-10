@@ -137,34 +137,45 @@ Trevor May
 
 **Non-goals for v1**: multi-speaker/diarization, Windows support, music/b-roll-aware logic, source-clip workflow, full custom waveform UI.
 
-### Evil Twin — Paused 2026-05-09 (mid-Step 4 validation)
+### Evil Twin — Paused 2026-05-10 (after Step 5 algorithm validated end-to-end)
 
 **Where we are**:
-- ✅ Step 1 scaffold complete (commit `0244946` on `IamTrevorMay/mayday-cutting-board-evil-twin`)
-- ✅ Three SDK primitives added to MaydayCreate (commit `84c2b33`):
-  - `ctx.invokePlugin(pluginId, commandId, args)`
-  - `MediaServiceAPI.transcribe(filePath, opts)` (whisper.cpp `--output-json`)
-  - `TimelineServiceAPI.rippleDeleteRange(startSec, endSec)`
-- ✅ Validation harness: 3 test buttons in Evil Twin's CEP panel (commit `6ed2137` + `b…` panel commit)
-- ✅ **Step 2 gate PASSED**: cross-plugin invocation works end-to-end. silence-pass returned 188 silent regions through `ctx.invokePlugin`.
-- 🔧 **Step 4 gate IN PROGRESS**: range delete works mechanically, but validation result was ambiguous — `liftedCount=0, movedCount=20`. Either the test sequence had no content at [5,10] OR razor's frame-quantization put cuts outside our 1ms tolerance. EPS_TICKS now bumped to 12.7e9 (~50ms, comfortably covers any frame rate ≥ 20fps).
-- ⏸️ Step 3 (transcribe): not yet validated. Requires `whisper-cli` on PATH + `ggml-base.en.bin` model.
+- ✅ Step 1 scaffold (commit `0244946`)
+- ✅ Three SDK primitives added (commit `84c2b33`): `ctx.invokePlugin`, `MediaServiceAPI.transcribe`, `TimelineServiceAPI.rippleDeleteRange`
+- ✅ Validation harness with 5 test buttons in Evil Twin's CEP panel
+- ✅ **Step 2 gate PASSED**: cross-plugin invocation works. silence-pass returns structured silent regions via `ctx.invokePlugin`.
+- ✅ **Step 3 PASSED**: whisper-cli (Homebrew) installed, model downloaded to `~/Library/Application Support/@mayday/launcher/plugin-data/models/ggml-base.en.bin`. `transcribe` returns time-aligned segments via `--output-json`.
+- ✅ **Step 5 PASSED**: heuristic take detector built and validated on real audio. Two layers:
+  1. Per-segment prefix detector (4-word leading prefix match, exact 3+ tokens or fuzzy with ≥2 leading exact, chains through restarts)
+  2. `splitOnInternalRestarts` preprocessor — handles whisper's energy-based segmenting that lumps multiple takes into single segments. Builds a flat word stream, hash-indexes 4-word phrases, dedupes consecutive overlapping windows, splits original segments at the deduped take boundaries.
+  - Real-audio test: `~/Downloads/Mercer Island 15.m4a` (3 takes of "Hey guys welcome back to the channel") → produces single cut range `[0, 16.62s]` removing first two attempts, keeping third in full. ✓
+- ⚠️ **Step 4 gate STILL UNVALIDATED**: range ripple delete code is in place but the only test run gave ambiguous output (`liftedCount=0, movedCount=20`) — never confirmed on a sequence with known content at [5,10]. EPS_TICKS bumped to ~50ms. Still uses QE razor + per-track lift + `clip.move(-rangeTicks)` because `app.executeCommand` is gone in Premiere 2026.
 
-**Critical Premiere 2026 finding**: `app.executeCommand` was REMOVED. The first rippleDeleteRange impl used `app.executeCommand(41089)` for Extract — that's gone. Reimplemented as: razor at boundaries via QE (`qe.project.getActiveSequence(0).razor(ticks)`), per-track lift clips fully in range (`clip.remove(false, true)`), per-track move clips after the range back via `clip.move(deltaTime)` with negative ticks. Avoids menu commands entirely.
+**Whisper output rule of thumb (learned today)**: whisper segments at audio energy boundaries, not content/sentence boundaries. A continuous monologue with 3 takes can come back as 4 long segments where take boundaries fall *inside* segments. The `splitOnInternalRestarts` preprocessor is essential — without it, the per-segment detector sees nothing to compare and returns zero cuts.
+
+**Take detector design rule (locked)**: "Last take in its entirety." Each detected restart cluster collapses to ONE cut range from the start of the earliest draft to the start of the keeper. All in-between segments (asides, "let me start over", false starts) get swept up automatically — no per-sentence cuts. This shape feeds directly into `rippleDeleteRange`.
 
 **Side-loaded for dev launcher** (NOT installed via Plugin Manager):
 - Server plugin: `~/Library/Application Support/@mayday/launcher/plugins/cutting-board-evil-twin/`
 - CEP extension: `~/Library/Application Support/Adobe/CEP/extensions/com.mayday.cutting-board-evil-twin.v1.0.0/`
-- Main `com.mayday.create` symlink was broken (pointed to old `~/Desktop/MaydayCreate/dist/cep`). Fixed to point to `~/Desktop/Mayday Software Development/MaydayCreate/dist/cep` — required for the Premiere ↔ server bridge.
+- Main `com.mayday.create` CEP symlink was broken on 2026-05-09; relinked to `~/Desktop/Mayday Software Development/MaydayCreate/dist/cep`.
 
-**Resume here**:
-1. Quit Premiere, restart dev launcher (`npm run dev:launcher`), reopen both the **Mayday Create** main panel and **Cutting Board Evil Twin** panel in Premiere.
-2. Open a sequence with KNOWN content between 5s and 10s on multiple tracks (V1 speech + V2 b-roll + A1 speech + A2 music ideal). Click the Timeline panel to focus it.
-3. Run Test 3 (start=5, end=10) again with the wider EPS. If `liftedCount > 0` and the duplicate sequence's later clips lined up correctly, Step 4 gate is **passed**.
-4. If still wrong: the per-track lift+move algorithm needs replacement — fall back to using `qe.project.getActiveSequence(0)` methods directly or rebuild with `seq.removeClips()` if it exists in Premiere 2026.
-5. Once Step 4 passes, move to Step 5 (heuristic take detector).
+**Useful test commands** (server must be running on port 9876):
+- `curl -X POST http://localhost:9876/api/plugins/cutting-board-evil-twin/command/detect-takes -H 'Content-Type: application/json' -d '{"useSample":true}'` — runs detector on built-in `SAMPLE_TRANSCRIPT`
+- `curl -X POST http://localhost:9876/api/plugins/cutting-board-evil-twin/command/transcribe-and-detect -H 'Content-Type: application/json' -d '{"filePath":"/path/to/audio.m4a"}'` — full pipeline on a real file
+- `curl -X POST http://localhost:9876/api/plugins/cutting-board-evil-twin/command/debug-preprocess -H 'Content-Type: application/json' -d '{"filePath":"/path/to/audio.m4a"}'` — inspect what `splitOnInternalRestarts` produces (for debugging)
 
-**Outstanding decision before Step 5**: Step 3 (transcribe) is untested. User does not have `whisper-cli` confirmed installed. Either install whisper.cpp + base.en model first, or punt Step 3 validation until take detection actually needs it.
+**Resume options when picking back up**:
+1. **End-to-end demo** (most exciting) — import Mercer Island clip into a Premiere sequence, run `transcribe-and-detect` to get cut range, then call `rippleDeleteRange` on a duplicate. Watch the redundant takes vanish. Requires Step 4 validation on a known-content sequence first.
+2. **Try detector on longer messier recording** — feed a 5-10 min raw take; tune the algorithm based on real failures.
+3. **Step 6 — strikethrough review UI** — render the cut ranges in the panel as transcript with strike-through, let user uncheck individual cuts before applying.
+4. **Step 7 — LLM tiebreak** — only worth building once we hit ambiguous cases the heuristic can't decide.
+
+**Algorithm known limitations (2026-05-10)**:
+- Single-speaker only (v1 scope)
+- Restart detection requires repeated 4+ word phrase. A speaker who restarts with completely different opening words won't be caught.
+- `splitOnInternalRestarts` uses estimated per-word timestamps (linear interpolation across segment) — frame-accurate splits would need word-level whisper timestamps (`-ml 1` flag, supported but not used).
+- No semantic understanding; "the first category is X" vs "the second category is Y" was a real false-positive scare during dev. Mitigated by requiring ≥2 leading exact tokens before any fuzzy match. LLM tiebreak (Step 7) is the planned final filter.
 
 ## Bug Fix Audit (2026-04-24)
 
